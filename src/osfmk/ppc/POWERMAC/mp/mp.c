@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -23,36 +23,13 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 /*
+ * @OSF_FREE_COPYRIGHT@
+ */
+/*
  * @APPLE_FREE_COPYRIGHT@
  */
+#include <cpus.h>
+#include <ppc/POWERMAC/mp/MPPlugIn.h>
 
-/*
- * Here be the instrumentaion page layout
- * Lovingly crafted by Bill Angell using traditional methods
-*/
-
-#ifndef _INSTRUMENTATION_H_
-#define _INSTRUMENTATION_H_
-
-#define INTRUMENTATION 1
-
-
-#define inBase 0x6000
-
-#define inEntry 0
-#define inAtGetTb 1
-#define inBeforeTrace 2
-#define inAfterSAAlloc 3
-#define inBeforeFilter 4
-#define inEatRuptQfret 5
-#define inEatRuptSAfree 6
-#define inPassupSwtchSeg 7
-#define inExceptionExit 8
-#define inMiddleOfSC 9
-#define inEatRuptSwtchSeg 10
-#define inPassup 11
-#define inCopyout 12
-#define inMUASbefore 13
-#define inMUAS
-
-#endif /* _INSTRUMENTATION_H_ */
+MPPlugInSpec	MPspec;		/* An area for the MP interfaces */
+MPEntryPts	MPEntries;	/* Real addresses of plugin routines */
