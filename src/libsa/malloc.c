@@ -25,11 +25,14 @@
 #include <string.h>
 
 #include <kern/queue.h>
+#include <kern/kalloc.h>
 #include <kern/lock.h>
 #include <kern/assert.h> 
 #include <vm/vm_kern.h>
 
 #include "libsa/malloc.h"
+
+extern void panic(const char *string, ...);
 
 /*********************************************************************
 * Structure for a client memory block. Contains linked-list pointers,
@@ -109,7 +112,7 @@ void free(void * address) {
 
 	mutex_unlock(malloc_lock);				/* Unlock now */
    
- 	kfree((void *)amem->malActl, amem->malSize);	/* Toss it */
+ 	kfree(amem->malActl, amem->malSize);		/* Toss it */
 
 	return;	
 
@@ -147,13 +150,13 @@ void malloc_reset(void) {
 	while(amem != &malAnchor) {					/* Go until we hit the anchor */
 	
 		bmem = amem->malFwd;					/* Next one */
- 		kfree((void *)amem->malActl, amem->malSize);	/* Toss it */
+ 		kfree(amem->malActl, amem->malSize);	/* Toss it */
  		amem = bmem;							/* Skip to it */
 	
 	} 
 
-	malAnchor.malFwd = 0x666;					/* Cause a fault if we try again */
-	malAnchor.malBwd = 0x666;					/* Cause a fault if we try again */
+	malAnchor.malFwd = (struct malloc_block	*) 0x666;	/* Cause a fault if we try again */
+	malAnchor.malBwd = (struct malloc_block	*) 0x666;	/* Cause a fault if we try again */
 	
 	mutex_unlock(malloc_lock);				/* Unlock now */
 

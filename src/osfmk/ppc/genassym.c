@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2003 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -50,6 +50,7 @@
 #include <kern/host.h>
 #include <kern/lock.h>
 #include <kern/processor.h>
+#include <kern/syscall_sw.h>
 #include <ppc/exception.h>
 #include <ppc/thread_act.h>
 #include <ppc/misc_protos.h>
@@ -81,18 +82,21 @@
 int main(int argc, char *argv[])
 {
 	/* Process Control Block */
-
-	DECLARE("ACT_MACT_KSP",	offsetof(struct thread_activation *, mact.ksp));
-	DECLARE("ACT_MACT_BEDA", offsetof(struct thread_activation *, mact.bbDescAddr));
-	DECLARE("ACT_MACT_BTS",	offsetof(struct thread_activation *, mact.bbTableStart));
-	DECLARE("ACT_MACT_BTE",	offsetof(struct thread_activation *, mact.bbTaskEnv));
-	DECLARE("ACT_MACT_SPF",	offsetof(struct thread_activation *, mact.specFlags));
-	DECLARE("ACT_PREEMPT_CNT",	offsetof(struct thread_activation *, mact.preemption_count));
-	DECLARE("qactTimer",	offsetof(struct thread_activation *, mact.qactTimer));
-	DECLARE("cioSpace",		offsetof(struct thread_activation *, mact.cioSpace));
-	DECLARE("cioRelo",		offsetof(struct thread_activation *, mact.cioRelo));
+	DECLARE("ACT_MACT_KSP",	offsetof(thread_act_t, mact.ksp));
+	DECLARE("ACT_MACT_BEDA", offsetof(thread_act_t, mact.bbDescAddr));
+	DECLARE("ACT_MACT_BTS",	offsetof(thread_act_t, mact.bbTableStart));
+	DECLARE("ACT_MACT_BTE",	offsetof(thread_act_t, mact.bbTaskEnv));
+	DECLARE("ACT_MACT_SPF",	offsetof(thread_act_t, mact.specFlags));
+	DECLARE("ACT_PREEMPT_CNT",	offsetof(thread_act_t, mact.preemption_count));
+	DECLARE("qactTimer",	offsetof(thread_act_t, mact.qactTimer));
+	DECLARE("cioSpace",	offsetof(thread_act_t, mact.cioSpace));
+	DECLARE("cioRelo",	offsetof(thread_act_t, mact.cioRelo));
 	DECLARE("cioSwitchAway",	cioSwitchAway);
 	DECLARE("cioSwitchAwayb",	cioSwitchAwayb);
+	DECLARE("bbTrap",		offsetof(thread_act_t, mact.bbTrap));
+	DECLARE("bbSysCall",	offsetof(thread_act_t, mact.bbSysCall));
+	DECLARE("bbInterrupt",	offsetof(thread_act_t, mact.bbInterrupt));
+	DECLARE("bbPending",	offsetof(thread_act_t, mact.bbPending));
 	
 	DECLARE("floatUsed",	floatUsed);
 	DECLARE("vectorUsed",	vectorUsed);
@@ -124,6 +128,7 @@ int main(int argc, char *argv[])
 	/* Per Proc info structure */
 	DECLARE("PP_CPU_NUMBER",		offsetof(struct per_proc_info *, cpu_number));
 	DECLARE("PP_CPU_FLAGS",			offsetof(struct per_proc_info *, cpu_flags));
+	DECLARE("SleepState",			SleepState);
 	DECLARE("PP_ISTACKPTR",			offsetof(struct per_proc_info *, istackptr));
 	DECLARE("PP_INTSTACK_TOP_SS",	offsetof(struct per_proc_info *, intstack_top_ss));
 	DECLARE("PP_DEBSTACKPTR",		offsetof(struct per_proc_info *, debstackptr));
@@ -132,8 +137,7 @@ int main(int argc, char *argv[])
 	DECLARE("VMXowner",				offsetof(struct per_proc_info *, VMX_owner));
 	DECLARE("holdQFret",			offsetof(struct per_proc_info *, holdQFret));
 
-	DECLARE("PP_ACTIVE_KLOADED", 	offsetof(struct per_proc_info *, active_kloaded));
-	DECLARE("PP_ACTIVE_STACKS", 	offsetof(struct per_proc_info *, active_stacks));
+	DECLARE("PP_SAVE_EXCEPTION_TYPE", offsetof(struct per_proc_info *, save_exception_type));
 	DECLARE("PP_NEED_AST", 			offsetof(struct per_proc_info *, need_ast));
 	DECLARE("quickfret", 			offsetof(struct per_proc_info *, quickfret));
 	DECLARE("lclfree", 				offsetof(struct per_proc_info *, lclfree));
@@ -141,7 +145,7 @@ int main(int argc, char *argv[])
 	DECLARE("PP_INTS_ENABLED", 		offsetof(struct per_proc_info *, interrupts_enabled));
 	DECLARE("UAW", 					offsetof(struct per_proc_info *, Uassist));
 	DECLARE("next_savearea", 		offsetof(struct per_proc_info *, next_savearea));
-	DECLARE("PP_ACTIVE_THREAD", 	offsetof(struct per_proc_info *, pp_active_thread));
+	DECLARE("PP_CPU_DATA", 			offsetof(struct per_proc_info *, pp_cpu_data));
 	DECLARE("PP_SIMPLE_LOCK_CNT",	offsetof(struct per_proc_info *, pp_simple_lock_count));
 	DECLARE("PP_INTERRUPT_LVL",		offsetof(struct per_proc_info *, pp_interrupt_level));
 	DECLARE("ppbbTaskEnv", 			offsetof(struct per_proc_info *, ppbbTaskEnv));
@@ -452,39 +456,34 @@ int main(int argc, char *argv[])
 #define IKSBASE (u_int)STACK_IKS(0)
 
 	/* values from kern/thread.h */
-	DECLARE("THREAD_TOP_ACT",		offsetof(struct thread_shuttle *, top_act));
-	DECLARE("THREAD_KERNEL_STACK",	offsetof(struct thread_shuttle *, kernel_stack));
-	DECLARE("THREAD_CONTINUATION",	offsetof(struct thread_shuttle *, continuation));
-	DECLARE("THREAD_RECOVER",		offsetof(struct thread_shuttle *, recover));
+	DECLARE("THREAD_TOP_ACT",		offsetof(thread_t, top_act));
+	DECLARE("THREAD_KERNEL_STACK",	offsetof(thread_act_t, kernel_stack));
+	DECLARE("THREAD_RECOVER",		offsetof(thread_act_t, recover));
 	DECLARE("THREAD_FUNNEL_LOCK",
-			offsetof(struct thread_shuttle *, funnel_lock));
+			offsetof(thread_act_t, funnel_lock));
 	DECLARE("THREAD_FUNNEL_STATE",
-			offsetof(struct thread_shuttle *, funnel_state));
+			offsetof(thread_act_t, funnel_state));
 	DECLARE("LOCK_FNL_MUTEX",
 			offsetof(struct funnel_lock *, fnl_mutex));
 #if	MACH_LDEBUG
-	DECLARE("THREAD_MUTEX_COUNT",	offsetof(struct thread_shuttle *, mutex_count));
+	DECLARE("THREAD_MUTEX_COUNT",	offsetof(thread_t, mutex_count));
 #endif	/* MACH_LDEBUG */
-	DECLARE("THREAD_PSET",			offsetof(struct thread_shuttle *, processor_set));
-	DECLARE("THREAD_LINKS",			offsetof(struct thread_shuttle *, links));
-	DECLARE("THREAD_PSTHRN",		offsetof(struct thread_shuttle *, pset_threads.next));
 
 	/* values from kern/thread_act.h */
-	DECLARE("ACT_TASK",				offsetof(struct thread_activation *, task));
-	DECLARE("ACT_THREAD",			offsetof(struct thread_activation *, thread));
-	DECLARE("ACT_LOWER",			offsetof(struct thread_activation *, lower));
-	DECLARE("ACT_MACT_PCB",			offsetof(struct thread_activation *, mact.pcb));
-	DECLARE("ACT_AST",				offsetof(struct thread_activation *, ast));
-	DECLARE("ACT_VMMAP",			offsetof(struct thread_activation *, map));
-	DECLARE("ACT_KLOADED",			offsetof(struct thread_activation *, kernel_loaded));
-	DECLARE("ACT_KLOADING",			offsetof(struct thread_activation *, kernel_loading));
-	DECLARE("vmmCEntry",			offsetof(struct thread_activation *, mact.vmmCEntry));
-	DECLARE("vmmControl",			offsetof(struct thread_activation *, mact.vmmControl));
-	DECLARE("curctx",				offsetof(struct thread_activation *, mact.curctx));
-	DECLARE("deferctx",				offsetof(struct thread_activation *, mact.deferctx));
-	DECLARE("facctx",				offsetof(struct thread_activation *, mact.facctx));
+	DECLARE("ACT_TASK",				offsetof(thread_act_t, task));
+	DECLARE("ACT_THREAD",			offsetof(thread_act_t, thread));
+	DECLARE("ACT_LOWER",			offsetof(thread_act_t, lower));
+	DECLARE("ACT_MACT_PCB",			offsetof(thread_act_t, mact.pcb));
+	DECLARE("ACT_MACT_UPCB",		offsetof(thread_act_t, mact.upcb));
+	DECLARE("ACT_AST",				offsetof(thread_act_t, ast));
+	DECLARE("ACT_VMMAP",			offsetof(thread_act_t, map));
+	DECLARE("vmmCEntry",			offsetof(thread_act_t, mact.vmmCEntry));
+	DECLARE("vmmControl",			offsetof(thread_act_t, mact.vmmControl));
+	DECLARE("curctx",				offsetof(thread_act_t, mact.curctx));
+	DECLARE("deferctx",				offsetof(thread_act_t, mact.deferctx));
+	DECLARE("facctx",				offsetof(thread_act_t, mact.facctx));
 #ifdef MACH_BSD
-	DECLARE("CTHREAD_SELF",			offsetof(struct thread_activation *, mact.cthread_self));
+	DECLARE("CTHREAD_SELF",			offsetof(thread_act_t, mact.cthread_self));
 #endif  
 
 	DECLARE("FPUsave",				offsetof(struct facility_context *,FPUsave));
@@ -813,8 +812,8 @@ int main(int argc, char *argv[])
 	DECLARE("MACH_TRAP_FUNCTION",
 		offsetof(mach_trap_t *, mach_trap_function));
 
-	DECLARE("HOST_SELF", offsetof(host_t, host_self));
-	
+	DECLARE("MACH_TRAP_TABLE_COUNT", MACH_TRAP_TABLE_COUNT);
+
 	DECLARE("PPCcallmax", sizeof(PPCcalls));
 
 	/* Misc values used by assembler */

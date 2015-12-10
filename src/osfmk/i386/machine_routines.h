@@ -38,6 +38,9 @@
 
 /* Interrupt handling */
 
+/* Initialize Interrupts */
+void    ml_init_interrupt(void);
+
 /* Get Interrupts Enabled */
 boolean_t ml_get_interrupts_enabled(void);
 
@@ -52,15 +55,30 @@ void ml_cause_interrupt(void);
 
 void ml_get_timebase(unsigned long long *timestamp);
 
+/* Type for the Time Base Enable function */
+typedef void (*time_base_enable_t)(cpu_id_t cpu_id, boolean_t enable);
+
 /* Type for the IPI Hander */
 typedef void (*ipi_handler_t)(void);
 
+/* Struct for ml_processor_register */
+struct ml_processor_info {
+	cpu_id_t			cpu_id;
+	boolean_t			boot_cpu;
+	vm_offset_t			start_paddr;
+	boolean_t			supports_nap;
+	unsigned long		l2cr_value;
+	time_base_enable_t	time_base_enable;
+};
+
+typedef struct ml_processor_info ml_processor_info_t;
+
 /* Register a processor */
 kern_return_t ml_processor_register(
-	cpu_id_t cpu_id,
-	vm_offset_t start_paddr,
-	processor_t *processor,
-	ipi_handler_t *ipi_handler,
+        cpu_id_t cpu_id,
+	uint32_t lapic_id,
+        processor_t *processor,
+        ipi_handler_t *ipi_handler,
 	boolean_t boot_cpu);
 
 /* Initialize Interrupts */
@@ -182,6 +200,11 @@ vm_offset_t ml_static_malloc(
 
 #endif /* PEXPERT_KERNEL_PRIVATE || MACH_KERNEL_PRIVATE  */
 
+/* Zero bytes starting at a physical address */
+void bzero_phys(
+	addr64_t phys_address,
+	uint32_t length);
+
 #ifdef  MACH_KERNEL_PRIVATE 
 
 void machine_idle(void);
@@ -206,10 +229,6 @@ void ml_init_max_cpus(
 
 /* Return the maximum number of CPUs set by ml_init_max_cpus() */
 int ml_get_max_cpus(
-	void);
-
-/* Return the current number of CPUs */
-int ml_get_current_cpus(
 	void);
 
 #endif /* __APPLE_API_PRIVATE */

@@ -176,6 +176,8 @@ void ml_thread_policy(
 	unsigned policy_id,
 	unsigned policy_info)
 {
+        extern int srv;
+
 	if ((policy_id == MACHINE_GROUP) &&
 		((per_proc_info[0].pf.Available) & pfSMPcap))
 			thread_bind(thread, master_processor);
@@ -185,7 +187,8 @@ void ml_thread_policy(
 
 		thread_lock(thread);
 
-		thread->sched_mode |= TH_MODE_FORCEDPREEMPT;
+		if (srv == 0)
+		        thread->sched_mode |= TH_MODE_FORCEDPREEMPT;
 		set_priority(thread, thread->priority + 1);
 
 		thread_unlock(thread);
@@ -220,7 +223,8 @@ void
 machine_signal_idle(
 	processor_t processor)
 {
-	(void)cpu_signal(processor->slot_num, SIGPwake, 0, 0);
+	if (per_proc_info[processor->slot_num].pf.Available & (pfCanDoze|pfWillNap))
+		(void)cpu_signal(processor->slot_num, SIGPwake, 0, 0);
 }
 
 kern_return_t
@@ -312,12 +316,6 @@ ml_get_max_cpus(void)
 	}
 	(void) ml_set_interrupts_enabled(current_state);
 	return(machine_info.max_cpus);
-}
-
-int
-ml_get_current_cpus(void)
-{
-	return machine_info.avail_cpus;
 }
 
 void

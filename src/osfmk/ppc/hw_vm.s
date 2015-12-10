@@ -1761,7 +1761,7 @@ hpsSF1x:	bl		EXT(mapSetUp)				; Turn off interrupts, translation, and possibly e
 
 			bl		mapPhysLock					; Lock the physent
 			 
- 			lhz		r8,pmapSpace(r4)			; Get the space hash
+ 			lwz		r8,pmapSpace(r4)			; Get the space hash
  
  			bt++	pf64Bitb,hpsSF				; skip if 64-bit (only they take the hint)
 		
@@ -2310,7 +2310,7 @@ hwpSPrtMap:	lwz		r9,mpFlags(r31)				; Get the mapping flags
 			rlwinm.	r9,r9,0,mpPermb,mpPermb		; Is the mapping permanent?
 			li		r0,lo16(mpPP)				; Get protection bits
 			crnot	cr0_eq,cr0_eq				; Change CR0_EQ to true if mapping is permanent
-			rlwinm	r2,r25,0,mpPPb-32,mpPPb-32+2	; Isolate new protection 
+			rlwinm	r2,r25,0,mpPPb-32,mpPPb-32+2	; Position new protection 
 			beqlr--								; Leave if permanent mapping (before we trash R5)...
 			andc	r5,r5,r0					; Clear the old prot bits
 			or		r5,r5,r2					; Move in the prot bits
@@ -3805,7 +3805,7 @@ hpfNoPte64:	subic.	r21,r21,1					; See if we have tried all slots
 			ld		r7,8(r19)					; Get the real part of the stealee
 			rldicr	r6,r6,0,62					; Clear the valid bit
 			bgt		cr5,hpfNipBMx				; Do not try to lock a non-existant physent for a block mapping...
-			srdi	r3,r7,12					; Change page address to a page number
+			srdi	r3,r7,12					; Change page address to a page address
 			bl		mapFindPhyTry				; Go find and try to lock physent (note: if R3 is 0, there is no physent for this page)
 			cmplwi	cr1,r3,0					; Check if this is in RAM
 			bne--	hpfNoPte64					; Could not get it, try for another...
@@ -4560,10 +4560,10 @@ hbsrupt:	andc	r4,r4,r2					; Clear the valid bit for this segment
 LEXT(invalidateSegs)
 
 			la		r10,pmapCCtl(r3)			; Point to the segment cache control
-			eqv		r0,r0,r0					; Get all foxes
+			eqv		r2,r2,r2					; Get all foxes
 			
 isInv:		lwarx	r4,0,r10					; Get the segment cache control value
-			rlwimi	r4,r0,0,0,15				; Slam in all invalid bits
+			rlwimi	r4,r2,0,0,15				; Slam in all invalid bits
 			rlwinm.	r0,r4,0,pmapCCtlLckb,pmapCCtlLckb	; Is it already locked?
 			bne--	isInv0						; Yes, try again...
 			

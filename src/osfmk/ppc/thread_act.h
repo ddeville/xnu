@@ -89,6 +89,7 @@ typedef struct MachineThrAct {
 	 * same saveareas.
 	 */
 	savearea		*pcb;			/* The "normal" savearea */
+	savearea		*upcb;			/* The "normal" user savearea */
 	facility_context *curctx;		/* Current facility context */
 	facility_context *deferctx;		/* Deferred facility context */
 	facility_context facctx;		/* "Normal" facility context */
@@ -110,6 +111,10 @@ typedef struct MachineThrAct {
 	unsigned int	specFlags;		/* Special flags */
     unsigned int    pmcovfl[8];     /* PMC overflow count */
     unsigned int    perfmonFlags;   /* Perfmon facility flags */
+    unsigned int	bbTrap;			/* Blue Box trap vector */
+    unsigned int	bbSysCall;		/* Blue Box syscall vector */
+    unsigned int	bbInterrupt;	/* Blue Box interrupt vector */
+    unsigned int	bbPending;		/* Blue Box pending interrupt vector */
 
 /* special flags bits */
 
@@ -162,7 +167,10 @@ extern struct savearea *find_user_regs(thread_act_t act);
 extern struct savearea *get_user_regs(thread_act_t);
 extern struct savearea_fpu *find_user_fpu(thread_act_t act);
 extern struct savearea_vec *find_user_vec(thread_act_t act);
+extern struct savearea_vec *find_user_vec_curr(void);
 extern int thread_enable_fpe(thread_act_t act, int onoff);
+
+extern struct savearea *find_kern_regs(thread_act_t act);
 
 extern void *act_thread_csave(void);
 extern void act_thread_catt(void *ctx);

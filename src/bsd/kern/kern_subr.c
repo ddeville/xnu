@@ -76,6 +76,7 @@
 #define DBG_UIO_COPYOUT 16
 #define DBG_UIO_COPYIN  17
 
+
 int
 uiomove(cp, n, uio)
 	register caddr_t cp;
@@ -116,22 +117,22 @@ uiomove64(addr64_t cp, int n, struct uio *uio)
 			if (uio->uio_rw == UIO_READ)
 			  {
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYOUT)) | DBG_FUNC_START,
-					 (caddr_t)cp, iov->iov_base, cnt, 0,0);
+					 (int)cp, (int)iov->iov_base, cnt, 0,0);
 
-				error = copyout((caddr_t)cp, iov->iov_base, cnt);
+				error = copyout( CAST_DOWN(caddr_t, cp), iov->iov_base, cnt );
 
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYOUT)) | DBG_FUNC_END,
-					 (caddr_t)cp, iov->iov_base, cnt, 0,0);
+					 (int)cp, (int)iov->iov_base, cnt, 0,0);
 			  }
 			else
 			  {
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYIN)) | DBG_FUNC_START,
-					 iov->iov_base, (caddr_t)cp, cnt, 0,0);
+					 (int)iov->iov_base, (int)cp, cnt, 0,0);
 
-			        error = copyin(iov->iov_base, (caddr_t)cp, cnt);
+			        error = copyin(iov->iov_base, CAST_DOWN(caddr_t, cp), cnt);
 
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYIN)) | DBG_FUNC_END,
-					 iov->iov_base, (caddr_t)cp, cnt, 0,0);
+					 (int)iov->iov_base, (int)cp, cnt, 0,0);
 			  }
 			if (error)
 				return (error);
@@ -139,10 +140,10 @@ uiomove64(addr64_t cp, int n, struct uio *uio)
 
 		case UIO_SYSSPACE:
 			if (uio->uio_rw == UIO_READ)
-				error = copywithin((caddr_t)cp, iov->iov_base,
+				error = copywithin(CAST_DOWN(caddr_t, cp), iov->iov_base,
 						   cnt);
 			else
-				error = copywithin(iov->iov_base, (caddr_t)cp,
+				error = copywithin(iov->iov_base, CAST_DOWN(caddr_t, cp),
 						   cnt);
 			break;
 
@@ -150,24 +151,51 @@ uiomove64(addr64_t cp, int n, struct uio *uio)
 			if (uio->uio_rw == UIO_READ)
 			  {
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYOUT)) | DBG_FUNC_START,
-					 cp, iov->iov_base, cnt, 1,0);
+					 (int)cp, (int)iov->iov_base, cnt, 1,0);
 
 				if (error = copypv((addr64_t)cp, (addr64_t)((unsigned int)iov->iov_base), cnt, cppvPsrc | cppvNoRefSrc)) 	/* Copy physical to virtual */
 				        error = EFAULT;
 
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYOUT)) | DBG_FUNC_END,
-					 cp, iov->iov_base, cnt, 1,0);
+					 (int)cp, (int)iov->iov_base, cnt, 1,0);
 			  }
 			else
 			  {
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYIN)) | DBG_FUNC_START,
-					 iov->iov_base, cp, cnt, 1,0);
+					 (int)iov->iov_base, (int)cp, cnt, 1,0);
 
 				if (error = copypv((addr64_t)((unsigned int)iov->iov_base), (addr64_t)cp, cnt, cppvPsnk | cppvNoRefSrc | cppvNoModSnk))	/* Copy virtual to physical */
 				        error = EFAULT;
 
 			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYIN)) | DBG_FUNC_END,
-					 iov->iov_base, cp, cnt, 1,0);
+					 (int)iov->iov_base, (int)cp, cnt, 1,0);
+			  }
+			if (error)
+				return (error);
+			break;
+
+		case UIO_PHYS_SYSSPACE:
+			if (uio->uio_rw == UIO_READ)
+			  {
+			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYOUT)) | DBG_FUNC_START,
+					 (int)cp, (int)iov->iov_base, cnt, 2,0);
+
+				if (error = copypv((addr64_t)cp, (addr64_t)((unsigned int)iov->iov_base), cnt, cppvKmap | cppvPsrc | cppvNoRefSrc)) 	/* Copy physical to virtual */
+				        error = EFAULT;
+
+			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYOUT)) | DBG_FUNC_END,
+					 (int)cp, (int)iov->iov_base, cnt, 2,0);
+			  }
+			else
+			  {
+			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYIN)) | DBG_FUNC_START,
+					 (int)iov->iov_base, (int)cp, cnt, 2,0);
+
+				if (error = copypv((addr64_t)((unsigned int)iov->iov_base), (addr64_t)cp, cnt, cppvKmap | cppvPsnk | cppvNoRefSrc | cppvNoModSnk))	/* Copy virtual to physical */
+				        error = EFAULT;
+
+			        KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, DBG_UIO_COPYIN)) | DBG_FUNC_END,
+					 (int)iov->iov_base, (int)cp, cnt, 2,0);
 			  }
 			if (error)
 				return (error);

@@ -194,7 +194,7 @@ db_ppc_reg_value(
 
 				for (cpu = 0; cpu < NCPUS; cpu++) {
 					if (cpu_to_processor(cpu)->state == PROCESSOR_RUNNING &&
-						cpu_to_processor(cpu)->cpu_data->active_thread == thr_act->thread && saved_state[cpu]) {
+						cpu_to_processor(cpu)->active_thread == thr_act->thread && saved_state[cpu]) {
 						
 						dp = (db_expr_t)(((uint32_t)saved_state[cpu]) +
 								  (((uint32_t) vp->valuep) -
@@ -220,9 +220,9 @@ db_ppc_reg_value(
 
 	    if (!db_option(ap->modif, 'u')) {
 			for (cpu = 0; cpu < NCPUS; cpu++) {
-				if (cpu_to_processor(cpu)->state == PROCESSOR_RUNNING &&
-					cpu_to_processor(cpu)->cpu_data->active_thread == thr_act->thread && saved_state[cpu]) {
-						dp = (int *) (((int)saved_state[cpu]) +
+			    if (cpu_to_processor(cpu)->state == PROCESSOR_RUNNING &&
+			    	cpu_to_processor(cpu)->active_thread == thr_act->thread && saved_state[cpu]) {
+			    	    dp = (int *) (((int)saved_state[cpu]) +
 						  (((int) vp->valuep) - (int) &ddb_regs));
 					break;
 				}
@@ -442,7 +442,7 @@ db_stack_trace_cmd(
 	    if (!have_addr && !trace_thread) {
 			have_addr = TRUE;
 			trace_thread = TRUE;
-			act_list = &(current_task()->thr_acts);
+			act_list = &(current_task()->threads);
 			addr = (db_expr_t) queue_first(act_list);
 	    } 
 		else if (trace_thread) {
@@ -450,11 +450,11 @@ db_stack_trace_cmd(
 				if (!db_check_act_address_valid((thread_act_t)addr)) {
 					if (db_lookup_task((task_t)addr) == -1)
 						return;
-					act_list = &(((task_t)addr)->thr_acts);
+					act_list = &(((task_t)addr)->threads);
 					addr = (db_expr_t) queue_first(act_list);
 				} 
 				else {
-					act_list = &(((thread_act_t)addr)->task->thr_acts);
+					act_list = &(((thread_act_t)addr)->task->threads);
 					thcount = db_lookup_task_act(((thread_act_t)addr)->task,
 									(thread_act_t)addr);
 				}
@@ -468,7 +468,7 @@ db_stack_trace_cmd(
 					return;
 				}
 				have_addr = TRUE;
-				act_list = &th->task->thr_acts;
+				act_list = &th->task->threads;
 				addr = (db_expr_t) queue_first(act_list);
 			}
 	    }
@@ -507,7 +507,7 @@ next_thread:
 	    }
 	    if (trace_all_threads)
 		db_printf("---------- Thread 0x%x (#%d of %d) ----------\n",
-			  addr, thcount, th->task->thr_act_count);
+			  addr, thcount, th->task->thread_count);
 
 next_activation:
 
@@ -549,7 +549,7 @@ next_activation:
 	
 				for (cpu = 0; cpu < NCPUS; cpu++) {
 					if (cpu_to_processor(cpu)->state == PROCESSOR_RUNNING &&
-						cpu_to_processor(cpu)->cpu_data->active_thread == th->thread &&
+						cpu_to_processor(cpu)->active_thread == th->thread &&
 						saved_state[cpu]) {
 						break;
 					}
@@ -783,7 +783,7 @@ next_activation:
 	if (trace_all_threads) {
 	    if (top_act != THR_ACT_NULL)
 		th = top_act;
-	    th = (thread_act_t) queue_next(&th->thr_acts);
+	    th = (thread_act_t) queue_next(&th->task_threads);
 	    if (! queue_end(act_list, (queue_entry_t) th)) {
 		db_printf("\n");
 		addr = (db_expr_t) th;

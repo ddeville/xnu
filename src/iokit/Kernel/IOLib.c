@@ -73,7 +73,7 @@ static mutex_t *    gIOMallocContiguousEntriesLock;
 
 enum { kIOMaxPageableMaps = 16 };
 enum { kIOPageableMapSize = 16 * 1024 * 1024 };
-enum { kIOPageableMaxMapSize = 64 * 1024 * 1024 };
+enum { kIOPageableMaxMapSize = 96 * 1024 * 1024 };
 
 typedef struct {
     vm_map_t	map;

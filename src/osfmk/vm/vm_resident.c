@@ -266,6 +266,8 @@ int	vm_page_free_min = 0;
 int	vm_page_inactive_target = 0;
 int	vm_page_free_reserved = 0;
 int	vm_page_laundry_count = 0;
+int	vm_page_burst_count = 0;
+int	vm_page_throttled_count = 0;
 
 /*
  *	The VM system has a couple of heuristics for deciding
@@ -1496,6 +1498,8 @@ vm_page_free(
 
 	if (mem->laundry) {
 		extern int vm_page_laundry_min;
+		if (!object->internal)
+			vm_page_burst_count--;
 		vm_page_laundry_count--;
 		mem->laundry = FALSE;	/* laundry is now clear */
 		counter(++c_laundry_pages_freed);
@@ -1541,6 +1545,93 @@ vm_page_free(
 		vm_page_release(mem);
 	}
 }
+
+
+void
+vm_page_free_list(
+	register vm_page_t	mem)
+{
+    register vm_page_t		nxt;
+	register vm_page_t      first = NULL;
+	register vm_page_t      last;
+	register int            pg_count = 0;
+
+
+	while (mem) {
+		nxt = (vm_page_t)(mem->pageq.next);
+
+	        if (mem->clustered)
+			vm_pagein_cluster_unused++;
+
+		if (mem->laundry) {
+		        extern int vm_page_laundry_min;
+
+			if (!mem->object->internal)
+				vm_page_burst_count--;
+			vm_page_laundry_count--;
+			counter(++c_laundry_pages_freed);
+
+			if (vm_page_laundry_count < vm_page_laundry_min) {
+			        vm_page_laundry_min = 0;
+				thread_wakeup((event_t) &vm_page_laundry_count);
+			}
+		}
+		mem->busy = TRUE;
+
+		PAGE_WAKEUP(mem);	/* clears wanted */
+
+		if (mem->private)
+			mem->fictitious = TRUE;
+
+		if (!mem->fictitious) {
+		        /* depends on the queues lock */
+		        if (mem->zero_fill)
+			        vm_zf_count -= 1;
+			vm_page_init(mem, mem->phys_page);
+
+			mem->free = TRUE;
+
+			if (first == NULL)
+			        last = mem;
+			mem->pageq.next = (queue_t) first;
+			first = mem;
+
+			pg_count++;
+		} else {
+			mem->phys_page = vm_page_fictitious_addr;
+		        vm_page_release_fictitious(mem);
+		}
+		mem = nxt;
+	}
+	if (first) {
+	      
+	        mutex_lock(&vm_page_queue_free_lock);
+
+		last->pageq.next = (queue_entry_t) vm_page_queue_free;
+		vm_page_queue_free = first;
+
+		vm_page_free_count += pg_count;
+
+		if ((vm_page_free_wanted > 0) &&
+		    (vm_page_free_count >= vm_page_free_reserved)) {
+		        int  available_pages;
+
+			available_pages = vm_page_free_count - vm_page_free_reserved;
+
+			if (available_pages >= vm_page_free_wanted) {
+			        vm_page_free_wanted = 0;
+				thread_wakeup((event_t) &vm_page_free_count);
+			} else {
+			        while (available_pages--) {
+				        vm_page_free_wanted--;
+					thread_wakeup_one((event_t) &vm_page_free_count);
+				}
+			}
+		}
+		mutex_unlock(&vm_page_queue_free_lock);
+	}
+}
+
 
 /*
  *	vm_page_wire:

@@ -79,6 +79,8 @@
 extern int 		real_ncpus;						/* Number of actual CPUs */
 extern struct	Saveanchor saveanchor;			/* Aliged savearea anchor */
 
+void	machine_act_terminate(thread_act_t	act);
+
 /*
  * These constants are dumb. They should not be in asm.h!
  */
@@ -91,17 +93,6 @@ int   fpu_switch_count = 0;
 int   vec_trap_count = 0;
 int   vec_switch_count = 0;
 #endif
-
-extern struct thread_shuttle	*Switch_context(
-					struct thread_shuttle 	*old,
-				       	void	      		(*cont)(void),
-					struct thread_shuttle 	*new);
-
-
-#if	MACH_LDEBUG || MACH_KDB
-void		log_thread_action (char *, long, long, long);
-#endif
-
 
 /*
  * consider_machine_collect: try to collect machine-dependent pages
@@ -121,64 +112,25 @@ consider_machine_adjust()
         consider_mapping_adjust();
 }
 
-
-/*
- * stack_attach: Attach a kernel stack to a thread.
- */
-void
-machine_kernel_stack_init(
-	struct thread_shuttle *thread,
-	void		(*start_pos)(thread_t))
-{
-    vm_offset_t	stack;
-    unsigned int			*kss, *stck;
-	struct savearea 		*sv;
-
-    assert(thread->top_act->mact.pcb);
-    assert(thread->kernel_stack);
-    stack = thread->kernel_stack;
-
-	kss = (unsigned int *)STACK_IKS(stack);
-	sv = thread->top_act->mact.pcb;						/* This for the sake of C */
-
-	sv->save_lr = (uint64_t) start_pos;					/* Set up the execution address */
-	sv->save_srr0 = (uint64_t) start_pos;				/* Here too */
-	sv->save_srr1  = MSR_SUPERVISOR_INT_OFF;			/* Set the normal running MSR */
-	stck = (unsigned int *)((unsigned int)kss - KF_SIZE);	/* Point to the top frame */
-	sv->save_r1 = (uint64_t)stck;						/* Point to the top frame on the stack */
-	sv->save_fpscr = 0;									/* Clear all floating point exceptions */
-	sv->save_vrsave = 0;								/* Set the vector save state */
-	sv->save_vscr[3] = 0x00010000;						/* Supress java mode */
-
-	*stck = 0;											/* Zero the frame backpointer */
-	thread->top_act->mact.ksp = 0;						/* Show that the kernel stack is in use already */
-
-}
-
 /*
  * switch_context: Switch from one thread to another, needed for
  * 		   switching of space
  * 
  */
-struct thread_shuttle*
-switch_context(
-	struct thread_shuttle *old,
-	void (*continuation)(void),
-	struct thread_shuttle *new)
+thread_t
+machine_switch_context(
+	thread_t			old,
+	thread_continue_t	continuation,
+	thread_t			new)
 {
 	register thread_act_t old_act = old->top_act, new_act = new->top_act;
-	register struct thread_shuttle* retval;
+	register thread_t retval;
 	pmap_t	new_pmap;
 	facility_context *fowner;
 	struct per_proc_info *ppinfo;
-	
-	
-#if	MACH_LDEBUG || MACH_KDB
-	log_thread_action("switch", 
-			  (long)old, 
-			  (long)new, 
-			  (long)__builtin_return_address(0));
-#endif
+
+	if (old == new)
+		panic("machine_switch_context");
 
 	ppinfo = getPerProc();								/* Get our processor block */
 
@@ -242,13 +194,10 @@ switch_context(
 	}
 
 	KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_SCHED,MACH_SCHED) | DBG_FUNC_NONE,
-		     (int)old, (int)new, old->sched_pri, new->sched_pri, 0);
+		     old->reason, (int)new, old->sched_pri, new->sched_pri, 0);
 
-/*	*********** SWITCH HERE **************/
 	retval = Switch_context(old, continuation, new);
 	assert(retval != (struct thread_shuttle*)NULL);
-/*	*********** SWITCH HERE **************/
-
 
 	if (branch_tracing_enabled()) {
 		ppinfo = getPerProc();							/* Get our processor block */
@@ -263,35 +212,19 @@ switch_context(
 }
 
 /*
- * Alter the thread's state so that a following thread_exception_return
- * will make the thread return 'retval' from a syscall.
- */
-void
-thread_set_syscall_return(
-	struct thread_shuttle *thread,
-	kern_return_t	retval)
-{
-
-        thread->top_act->mact.pcb->save_r3 = retval;
-}
-
-/*
  * Initialize the machine-dependent state for a new thread.
  */
 kern_return_t
-thread_machine_create(
-		      struct thread_shuttle *thread,
-		      thread_act_t thr_act,
-		      void (*start_pos)(thread_t))
+machine_thread_create(
+	thread_t		thread,
+	task_t			task)
 {
-
 	savearea		*sv;									/* Pointer to newly allocated savearea */
 	unsigned int	*CIsTooLimited, i;
 
-
-	hw_atomic_add(&saveanchor.savetarget, 4);				/* Account for the number of saveareas we think we "need"
+	hw_atomic_add((uint32_t *)&saveanchor.savetarget, 4);	/* Account for the number of saveareas we think we "need"
 															   for this activation */
-	assert(thr_act->mact.pcb == (savearea *)0);				/* Make sure there was no previous savearea */
+	assert(thread->mact.pcb == (savearea *)0);				/* Make sure there was no previous savearea */
 	
 	sv = save_alloc();										/* Go get us a savearea */
 		
@@ -299,12 +232,12 @@ thread_machine_create(
 		
 	sv->save_hdr.save_prev = 0;								/* Clear the back pointer */
 	sv->save_hdr.save_flags = (sv->save_hdr.save_flags & ~SAVtype) | (SAVgeneral << SAVtypeshft);	/* Mark as in use */
-	sv->save_hdr.save_act = thr_act;						/* Set who owns it */
-	thr_act->mact.pcb = sv;									/* Point to the save area */
-	thr_act->mact.curctx = &thr_act->mact.facctx;			/* Initialize facility context */
-	thr_act->mact.facctx.facAct = thr_act;					/* Initialize facility context pointer to activation */
-	thr_act->mact.cioSpace = invalSpace;					/* Initialize copyin/out space to invalid */
-	thr_act->mact.preemption_count = 0;						/* Initialize preemption counter */
+	sv->save_hdr.save_act = (struct thread_activation *)thread;	/* Set who owns it */
+	thread->mact.pcb = sv;									/* Point to the save area */
+	thread->mact.curctx = &thread->mact.facctx;				/* Initialize facility context */
+	thread->mact.facctx.facAct = thread;					/* Initialize facility context pointer to activation */
+	thread->mact.cioSpace = invalSpace;						/* Initialize copyin/out space to invalid */
+	thread->mact.preemption_count = 0;						/* Initialize preemption counter */
 
 	/*
 	 * User threads will pull their context from the pcb when first
@@ -313,6 +246,7 @@ thread_machine_create(
 	 * at the base of the kernel stack (see stack_attach()).
 	 */
 
+	thread->mact.upcb = sv;									/* Set user pcb */
 	sv->save_srr1 = (uint64_t)MSR_EXPORT_MASK_SET;			/* Set the default user MSR */
 	sv->save_fpscr = 0;										/* Clear all floating point exceptions */
 	sv->save_vrsave = 0;									/* Set the vector save state */
@@ -328,24 +262,64 @@ thread_machine_create(
  * Machine-dependent cleanup prior to destroying a thread
  */
 void
-thread_machine_destroy( thread_t thread )
+machine_thread_destroy(
+	thread_t		thread)
 {
-	spl_t s;
-
-	if (thread->kernel_stack) {
-		s = splsched();
-		stack_free(thread);
-		splx(s);
-	}
-}
+	register savearea *pcb, *ppsv;
+	register savearea_vec *vsv, *vpsv;
+	register savearea_fpu *fsv, *fpsv;
+	register savearea *svp;
+	register int i;
 
 /*
- * flush out any lazily evaluated HW state in the
- * owning thread's context, before termination.
+ *	This function will release all context.
  */
-void
-thread_machine_flush( thread_act_t cur_act )
-{
+
+	machine_act_terminate(thread);							/* Make sure all virtual machines are dead first */
+ 
+/*
+ *
+ *	Walk through and release all floating point and vector contexts. Also kill live context.
+ *
+ */
+ 
+ 	toss_live_vec(thread->mact.curctx);						/* Dump live vectors */
+
+	vsv = thread->mact.curctx->VMXsave;						/* Get the top vector savearea */
+	
+	while(vsv) {											/* Any VMX saved state? */
+		vpsv = vsv;											/* Remember so we can toss this */
+		vsv = CAST_DOWN(savearea_vec *, vsv->save_hdr.save_prev);  /* Get one underneath our's */
+		save_release((savearea *)vpsv);						/* Release it */
+	}
+	
+	thread->mact.curctx->VMXsave = 0;							/* Kill chain */
+ 
+ 	toss_live_fpu(thread->mact.curctx);						/* Dump live float */
+
+	fsv = thread->mact.curctx->FPUsave;						/* Get the top float savearea */
+	
+	while(fsv) {											/* Any float saved state? */
+		fpsv = fsv;											/* Remember so we can toss this */
+		fsv = CAST_DOWN(savearea_fpu *, fsv->save_hdr.save_prev);   /* Get one underneath our's */
+		save_release((savearea *)fpsv);						/* Release it */
+	}
+	
+	thread->mact.curctx->FPUsave = 0;							/* Kill chain */
+
+/*
+ * free all regular saveareas.
+ */
+
+	pcb = thread->mact.pcb;									/* Get the general savearea */
+	
+	while(pcb) {											/* Any float saved state? */
+		ppsv = pcb;											/* Remember so we can toss this */
+		pcb = CAST_DOWN(savearea *, pcb->save_hdr.save_prev);  /* Get one underneath our's */ 
+		save_release(ppsv);									/* Release it */
+	}
+	
+	hw_atomic_sub((uint32_t *)&saveanchor.savetarget, 4);	/* Unaccount for the number of saveareas we think we "need" */
 }
 
 /*
@@ -362,10 +336,9 @@ int switch_act_swapins = 0;
  */
 void
 machine_switch_act( 
-	thread_t	thread,
+	thread_t		thread,
 	thread_act_t	old,
-	thread_act_t	new,
-	int				cpu)
+	thread_act_t	new)
 {
 	pmap_t		new_pmap;
 	facility_context *fowner;
@@ -394,17 +367,15 @@ machine_switch_act(
 
 	old->mact.cioSpace |= cioSwitchAway;				/* Show we switched away from this guy */
 
-	active_stacks[cpu] = thread->kernel_stack;
-
-	ast_context(new, cpu);
+	ast_context(new, cpu_number());
 
 	/* Activations might have different pmaps 
 	 * (process->kernel->server, for example).
 	 * Change space if needed
 	 */
 
-	if(new->mact.specFlags & runningVM) {				/* Is the new guy running a VM? */
-		pmap_switch(new->mact.vmmCEntry->vmmPmap);		/* Switch to the VM's pmap */
+	if(new->mact.specFlags & runningVM) {			/* Is the new guy running a VM? */
+		pmap_switch(new->mact.vmmCEntry->vmmPmap);	/* Switch to the VM's pmap */
 	}
 	else {												/* otherwise, we use the task's pmap */
 		new_pmap = new->task->map->pmap;
@@ -413,16 +384,7 @@ machine_switch_act(
 		}
 	}
 
-
 }
-
-void
-pcb_user_to_kernel(thread_act_t act)
-{
-
-	return;												/* Not needed, I hope... */
-}
-
 
 /*
  * act_machine_sv_free
@@ -524,7 +486,7 @@ act_machine_sv_free(thread_act_t act)
 			break;
 		}
 		svp = pcb;											/* Remember this */
-		pcb = pcb->save_hdr.save_prev;						/* Get one underneath our's */		
+		pcb = CAST_DOWN(savearea *, pcb->save_hdr.save_prev);  /* Get one underneath our's */ 
 		save_ret(svp);										/* Release it */
 	}
 	
@@ -532,13 +494,15 @@ act_machine_sv_free(thread_act_t act)
 	
 }
 
-
-/*
- * act_virtual_machine_destroy:
- * Shutdown any virtual machines associated with a thread
- */
 void
-act_virtual_machine_destroy(thread_act_t act)
+machine_thread_set_current(thread_t	thread)
+{
+    set_machine_current_act(thread->top_act);
+}
+
+void
+machine_act_terminate(
+	thread_act_t	act)
 {
 	if(act->mact.bbDescAddr) {								/* Check if the Blue box assist is active */
 		disable_bluebox_internal(act);						/* Kill off bluebox */
@@ -549,139 +513,14 @@ act_virtual_machine_destroy(thread_act_t act)
 	}
 }
 
-/*
- * act_machine_destroy: Shutdown any state associated with a thread pcb.
- */
 void
-act_machine_destroy(thread_act_t act)
+machine_thread_terminate_self(void)
 {
-
-	register savearea *pcb, *ppsv;
-	register savearea_vec *vsv, *vpsv;
-	register savearea_fpu *fsv, *fpsv;
-	register savearea *svp;
-	register int i;
-
-/*
- *	This function will release all context.
- */
-
-	act_virtual_machine_destroy(act);						/* Make sure all virtual machines are dead first */
- 
-/*
- *
- *	Walk through and release all floating point and vector contexts. Also kill live context.
- *
- */
- 
- 	toss_live_vec(act->mact.curctx);						/* Dump live vectors */
-
-	vsv = act->mact.curctx->VMXsave;						/* Get the top vector savearea */
-	
-	while(vsv) {											/* Any VMX saved state? */
-		vpsv = vsv;											/* Remember so we can toss this */
-		vsv = (savearea_vec *)vsv->save_hdr.save_prev;		/* Get one underneath our's */		
-		save_release((savearea *)vpsv);						/* Release it */
-	}
-	
-	act->mact.curctx->VMXsave = 0;							/* Kill chain */
- 
- 	toss_live_fpu(act->mact.curctx);						/* Dump live float */
-
-	fsv = act->mact.curctx->FPUsave;						/* Get the top float savearea */
-	
-	while(fsv) {											/* Any float saved state? */
-		fpsv = fsv;											/* Remember so we can toss this */
-		fsv = (savearea_fpu *)fsv->save_hdr.save_prev;		/* Get one underneath our's */		
-		save_release((savearea *)fpsv);						/* Release it */
-	}
-	
-	act->mact.curctx->FPUsave = 0;							/* Kill chain */
-
-/*
- * free all regular saveareas.
- */
-
-	pcb = act->mact.pcb;									/* Get the general savearea */
-	
-	while(pcb) {											/* Any float saved state? */
-		ppsv = pcb;											/* Remember so we can toss this */
-		pcb = pcb->save_hdr.save_prev;						/* Get one underneath our's */		
-		save_release(ppsv);									/* Release it */
-	}
-	
-	hw_atomic_sub(&saveanchor.savetarget, 4);				/* Unaccount for the number of saveareas we think we "need" */
-
-}
-
-
-kern_return_t
-act_machine_create(task_t task, thread_act_t thr_act)
-{
-	/*
-	 * Clear & Init the pcb  (sets up user-mode s regs)
-	 * We don't use this anymore.
-	 */
-
-	return KERN_SUCCESS;
-}
-
-void act_machine_init()
-{
-
-    /* Good to verify these once */
-    assert( THREAD_MACHINE_STATE_MAX <= THREAD_STATE_MAX );
-
-    assert( THREAD_STATE_MAX >= PPC_THREAD_STATE_COUNT );
-    assert( THREAD_STATE_MAX >= PPC_EXCEPTION_STATE_COUNT );
-    assert( THREAD_STATE_MAX >= PPC_FLOAT_STATE_COUNT );
-
-    /*
-     * If we start using kernel activations,
-     * would normally create kernel_thread_pool here,
-     * populating it from the act_zone
-     */
+	machine_act_terminate(current_act());
 }
 
 void
-act_machine_return(int code)
-{
-    thread_act_t thr_act = current_act();
-
-	/*
-	 * This code is called with nothing locked.
-	 * It also returns with nothing locked, if it returns.
-	 *
-	 * This routine terminates the current thread activation.
-	 * If this is the only activation associated with its
-	 * thread shuttle, then the entire thread (shuttle plus
-	 * activation) is terminated.
-	 */
-	assert( code == KERN_TERMINATED );
-	assert( thr_act );
-	assert(thr_act->thread->top_act == thr_act);
-
-	/* This is the only activation attached to the shuttle... */
-
-	thread_terminate_self();
-
-	/*NOTREACHED*/
-	panic("act_machine_return: TALKING ZOMBIE! (1)");
-}
-
-void
-thread_machine_set_current(struct thread_shuttle *thread)
-{
-    register int	my_cpu = cpu_number();
-
-    set_machine_current_thread(thread);
-    set_machine_current_act(thread->top_act);
-	
-    active_kloaded[my_cpu] = thread->top_act->kernel_loaded ? thread->top_act : THR_ACT_NULL;
-}
-
-void
-thread_machine_init(void)
+machine_thread_init(void)
 {
 #ifdef	MACHINE_STACK
 #if KERNEL_STACK_SIZE > PPC_PGBYTES
@@ -709,8 +548,8 @@ int
 	   thr_act->thread, thr_act->thread ? thr_act->thread->ref_count:0,
 	   thr_act->task,   thr_act->task   ? thr_act->task->ref_count : 0);
 
-    printf("\talerts=%x mask=%x susp=%x active=%x hi=%x lo=%x\n",
-	   thr_act->alerts, thr_act->alert_mask,
+    printf("\tsusp=%x active=%x hi=%x lo=%x\n",
+	   0 /*thr_act->alerts*/, 0 /*thr_act->alert_mask*/,
 	   thr_act->suspend_count, thr_act->active,
 	   thr_act->higher, thr_act->lower);
 
@@ -722,10 +561,7 @@ int
 unsigned int 
 get_useraddr()
 {
-
-	thread_act_t thr_act = current_act();
-
-	return(thr_act->mact.pcb->save_srr0);
+	return(current_act()->mact.upcb->save_srr0);
 }
 
 /*
@@ -733,7 +569,8 @@ get_useraddr()
  */
 
 vm_offset_t
-stack_detach(thread_t thread)
+machine_stack_detach(
+	thread_t		thread)
 {
   vm_offset_t stack;
 
@@ -762,9 +599,10 @@ stack_detach(thread_t thread)
  */
 
 void
-stack_attach(struct thread_shuttle *thread,
-	     vm_offset_t stack,
-	     void (*start_pos)(thread_t))
+machine_stack_attach(
+	thread_t		thread,
+	vm_offset_t		stack,
+	void			 (*start)(thread_t))
 {
   thread_act_t thr_act;
   unsigned int *kss;
@@ -772,7 +610,7 @@ stack_attach(struct thread_shuttle *thread,
 
         KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_SCHED,MACH_STACK_ATTACH),
             thread, thread->priority,
-            thread->sched_pri, start_pos,
+            thread->sched_pri, start,
             0);
 
   assert(stack);
@@ -784,18 +622,18 @@ stack_attach(struct thread_shuttle *thread,
   if ((thr_act = thread->top_act) != 0) {
     sv = save_get();  /* cannot block */
 	sv->save_hdr.save_flags = (sv->save_hdr.save_flags & ~SAVtype) | (SAVgeneral << SAVtypeshft);	/* Mark as in use */
-    sv->save_hdr.save_act = thr_act;
-	sv->save_hdr.save_prev = thr_act->mact.pcb;
+    sv->save_hdr.save_act = (struct thread_activation *)thr_act;
+	sv->save_hdr.save_prev = (addr64_t)((uintptr_t)thr_act->mact.pcb);
     thr_act->mact.pcb = sv;
 
-    sv->save_srr0 = (unsigned int) start_pos;
+    sv->save_srr0 = (unsigned int) start;
     /* sv->save_r3 = ARG ? */
     sv->save_r1 = (vm_offset_t)((int)kss - KF_SIZE);
 	sv->save_srr1 = MSR_SUPERVISOR_INT_OFF;
 	sv->save_fpscr = 0;									/* Clear all floating point exceptions */
 	sv->save_vrsave = 0;								/* Set the vector save state */
 	sv->save_vscr[3] = 0x00010000;						/* Supress java mode */
-    *((int *)sv->save_r1) = 0;
+    *(CAST_DOWN(int *, sv->save_r1)) = 0;
     thr_act->mact.ksp = 0;			      
   }
 
@@ -807,27 +645,29 @@ stack_attach(struct thread_shuttle *thread,
  */
 
 void
-stack_handoff(thread_t old,
-	      thread_t new)
+machine_stack_handoff(
+	thread_t		old,
+	thread_t		new)
 {
 
 	vm_offset_t stack;
 	pmap_t new_pmap;
 	facility_context *fowner;
-	int	my_cpu;
 	mapping *mp;
 	struct per_proc_info *ppinfo;
 	
 	assert(new->top_act);
 	assert(old->top_act);
+
+	if (old == new)
+		panic("machine_stack_handoff");
 	
-	my_cpu = cpu_number();
-	stack = stack_detach(old);
+	stack = machine_stack_detach(old);
 	new->kernel_stack = stack;
-	if (stack == old->stack_privilege) {
-		assert(new->stack_privilege);
-		old->stack_privilege = new->stack_privilege;
-		new->stack_privilege = stack;
+	if (stack == old->reserved_stack) {
+		assert(new->reserved_stack);
+		old->reserved_stack = new->reserved_stack;
+		new->reserved_stack = stack;
 	}
 
 	ppinfo = getPerProc();								/* Get our processor block */
@@ -848,6 +688,7 @@ stack_handoff(thread_t old,
 			}
 		}
 	}
+
 	/*
 	 * If old thread is running VM, save per proc userProtKey and FamVMmode spcFlags bits in the thread spcFlags
  	 * This bits can be modified in the per proc without updating the thread spcFlags
@@ -858,7 +699,7 @@ stack_handoff(thread_t old,
 	}
 
 	KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_SCHED,MACH_STACK_HANDOFF) | DBG_FUNC_NONE,
-		     (int)old, (int)new, old->sched_pri, new->sched_pri, 0);
+		     old->reason, (int)new, old->sched_pri, new->sched_pri, 0);
 
 
 	if(new->top_act->mact.specFlags & runningVM) {	/* Is the new guy running a VM? */
@@ -874,8 +715,7 @@ stack_handoff(thread_t old,
 		}
 	}
 
-	thread_machine_set_current(new);
-	active_stacks[my_cpu] = new->kernel_stack;
+	machine_thread_set_current(new);
 	ppinfo->Uassist = new->top_act->mact.cthread_self;
 
 	ppinfo->ppbbTaskEnv = new->top_act->mact.bbTaskEnv;
@@ -916,20 +756,4 @@ call_continuation(void (*continuation)(void) )
   Call_continuation(continuation, tsp);
   
   return;
-}
-
-void
-thread_swapin_mach_alloc(thread_t thread)
-{
-    struct savearea *sv;
-
-	assert(thread->top_act->mact.pcb == 0);
-
-    sv = save_alloc();
-	assert(sv);
-    sv->save_hdr.save_prev = 0;						/* Initialize back chain */
-	sv->save_hdr.save_flags = (sv->save_hdr.save_flags & ~SAVtype) | (SAVgeneral << SAVtypeshft);	/* Mark as in use */
-    sv->save_hdr.save_act = thread->top_act;		/* Initialize owner */
-    thread->top_act->mact.pcb = sv;
-
 }

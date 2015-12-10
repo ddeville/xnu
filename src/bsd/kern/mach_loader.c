@@ -47,6 +47,7 @@
 #include <mach/mach_types.h>
 
 #include <kern/mach_loader.h>
+#include <kern/task.h>
 
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
@@ -152,6 +153,9 @@ load_machfile(
 	kern_return_t		kret;
 	load_return_t		lret;
 	boolean_t create_map = TRUE;
+#ifndef i386
+	extern pmap_t pmap_create(vm_size_t   size); /* XXX */
+#endif
 
 	if (new_map != VM_MAP_NULL) {
 		create_map = FALSE;
@@ -193,9 +197,8 @@ load_machfile(
 	 *	up the old contents of IPC and memory.  The task is
 	 *	guaranteed to be single threaded upon return (us).
 	 *
-	 *	Swap the new map for the old at the task level and at
-	 *	our activation.  The latter consumes our new map reference
-	 *	but each leaves us responsible for the old_map reference.
+	 *	Swap the new map for the old, which  consumes our new map
+	 *	reference but each leaves us responsible for the old_map reference.
 	 *	That lets us get off the pmap associated with it, and
 	 *	then we can release it.
 	 */
@@ -203,10 +206,6 @@ load_machfile(
 		task_halt(current_task());
 
 		old_map = swap_task_map(current_task(), map);
-		vm_map_deallocate(old_map);
-
-		old_map = swap_act_map(current_act(), map);
-
 #ifndef i386
 		pmap_switch(pmap);	/* Make sure we are using the new pmap */
 #endif
@@ -318,11 +317,11 @@ parse_machfile(
 	if (addr == NULL)
 		return(LOAD_NOSPACE);
 
-	if(error = vn_rdwr(UIO_READ, vp, addr, size, file_offset,
+	if(error = vn_rdwr(UIO_READ, vp, (caddr_t)addr, size, file_offset,
 	    UIO_SYSSPACE, 0, p->p_ucred, &resid, p)) {
 		if (kl_addr )
 			kfree(kl_addr, kl_size);
-		return(EIO);
+		return(LOAD_IOERROR);
 	}
 	/* ubc_map(vp); */ /* NOT HERE */
 	
@@ -530,9 +529,6 @@ load_segment(
 	caddr_t			tmp;
 	vm_prot_t 		initprot;
 	vm_prot_t		maxprot;
-#if 1
-	extern int print_map_addr;
-#endif /* 1 */
 
 	/*
 	 * Make sure what we get from the file is really ours (as specified
@@ -567,10 +563,6 @@ load_segment(
 		if (ret != KERN_SUCCESS)
 			return(LOAD_NOSPACE);
 	
-#if 1
-		if (print_map_addr)
-			printf("LSegment: Mapped addr= %x; size = %x\n", map_addr, map_size);
-#endif /* 1 */
 		/*
 		 *	If the file didn't end on a page boundary,
 		 *	we need to zero the leftover.
@@ -633,18 +625,16 @@ static
 load_return_t
 load_unixthread(
 	struct thread_command	*tcp,
-	thread_act_t		thr_act,
+	thread_act_t		thread,
 	load_result_t		*result
 )
 {
-	thread_t	thread = current_thread();
 	load_return_t	ret;
 	int customstack =0;
 	
 	if (result->thread_count != 0)
 		return (LOAD_FAILURE);
 	
-	thread = getshuttle_thread(thr_act);
 	ret = load_threadstack(thread,
 		       (unsigned long *)(((vm_offset_t)tcp) + 
 		       		sizeof(struct thread_command)),
@@ -683,25 +673,23 @@ static
 load_return_t
 load_thread(
 	struct thread_command	*tcp,
-	thread_act_t			thr_act,
+	thread_act_t			thread,
 	load_result_t		*result
 )
 {
-	thread_t	thread;
 	kern_return_t	kret;
 	load_return_t	lret;
 	task_t			task;
 	int customstack=0;
 
-	task = get_threadtask(thr_act);
-	thread = getshuttle_thread(thr_act);
+	task = get_threadtask(thread);
 
 	/* if count is 0; same as thr_act */
 	if (result->thread_count != 0) {
 		kret = thread_create(task, &thread);
 		if (kret != KERN_SUCCESS)
 			return(LOAD_RESOURCE);
-		thread_deallocate(thread);
+		act_deallocate(thread);
 	}
 
 	lret = load_threadstate(thread,
@@ -769,7 +757,7 @@ load_threadstate(
 		total_size -= (size+2)*sizeof(unsigned long);
 		if (total_size < 0)
 			return(LOAD_BADMACHO);
-		ret = thread_setstatus(getact_thread(thread), flavor, ts, size);
+		ret = thread_setstatus(thread, flavor, ts, size);
 		if (ret != KERN_SUCCESS)
 			return(LOAD_FAILURE);
 		ts += size;	/* ts is a (unsigned long *) */
@@ -862,6 +850,7 @@ load_dylinker(
 	vm_map_copy_t	tmp;
 	vm_offset_t	dyl_start, map_addr;
 	vm_size_t	dyl_length;
+	extern pmap_t pmap_create(vm_size_t   size); /* XXX */
 
 	name = (char *)lcp + lcp->name.offset;
 	/*
@@ -962,7 +951,7 @@ get_macho_vnode(
 	struct proc *p = current_proc();		/* XXXX */
 	boolean_t		is_fat;
 	struct fat_arch		fat_arch;
-	int			error = KERN_SUCCESS;
+	int			error = LOAD_SUCCESS;
 	int resid;
 	union {
 		struct mach_header	mach_header;
@@ -971,6 +960,7 @@ get_macho_vnode(
 	} header;
 	off_t fsize = (off_t)0;
 	struct	ucred *cred = p->p_ucred;
+	int err2;
 	
 	ndp = &nid;
 	atp = &attr;
@@ -978,24 +968,31 @@ get_macho_vnode(
 	/* init the namei data to point the file user's program name */
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, path, p);
 
-	if (error = namei(ndp))
+	if (error = namei(ndp)) {
+		if (error == ENOENT)
+			error = LOAD_ENOENT;
+		else
+			error = LOAD_FAILURE;
 		return(error);
+	}
 	
 	vp = ndp->ni_vp;
 	
 	/* check for regular file */
 	if (vp->v_type != VREG) {
-		error = EACCES;
+		error = LOAD_PROTECT;
 		goto bad1;
 	}
 
 	/* get attributes */
-	if (error = VOP_GETATTR(vp, &attr, cred, p))
+	if (error = VOP_GETATTR(vp, &attr, cred, p)) {
+		error = LOAD_FAILURE;
 		goto bad1;
+	}
 
 	/* Check mount point */
 	if (vp->v_mount->mnt_flag & MNT_NOEXEC) {
-		error = EACCES;
+		error = LOAD_PROTECT;
 		goto bad1;
 	}
 
@@ -1003,28 +1000,33 @@ get_macho_vnode(
 		atp->va_mode &= ~(VSUID | VSGID);
 
 	/* check access.  for root we have to see if any exec bit on */
-	if (error = VOP_ACCESS(vp, VEXEC, cred, p))
+	if (error = VOP_ACCESS(vp, VEXEC, cred, p)) {
+		error = LOAD_PROTECT;
 		goto bad1;
+	}
 	if ((atp->va_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
-		error = EACCES;
+		error = LOAD_PROTECT;
 		goto bad1;
 	}
 
 	/* hold the vnode for the IO */
 	if (UBCINFOEXISTS(vp) && !ubc_hold(vp)) {
-		error = ENOENT;
+		error = LOAD_ENOENT;
 		goto bad1;
 	}
 
 	/* try to open it */
 	if (error = VOP_OPEN(vp, FREAD, cred, p)) {
+		error = LOAD_PROTECT;
 		ubc_rele(vp);
 		goto bad1;
 	}
 
 	if(error = vn_rdwr(UIO_READ, vp, (caddr_t)&header, sizeof(header), 0,
-	    UIO_SYSSPACE, IO_NODELOCKED, cred, &resid, p))
+	    UIO_SYSSPACE, IO_NODELOCKED, cred, &resid, p)) {
+		error = LOAD_IOERROR;
 		goto bad2;
+	}
 	
 	if (header.mach_header.magic == MH_MAGIC)
 	    is_fat = FALSE;
@@ -1043,11 +1045,11 @@ get_macho_vnode(
 			goto bad2;
 
 		/* Read the Mach-O header out of it */
-		error = vn_rdwr(UIO_READ, vp, &header.mach_header,
+		error = vn_rdwr(UIO_READ, vp, (caddr_t)&header.mach_header,
 				sizeof(header.mach_header), fat_arch.offset,
 				UIO_SYSSPACE, IO_NODELOCKED, cred, &resid, p);
 		if (error) {
-			error = LOAD_FAILURE;
+			error = LOAD_IOERROR;
 			goto bad2;
 		}
 
@@ -1076,7 +1078,7 @@ get_macho_vnode(
 
 bad2:
 	VOP_UNLOCK(vp, 0, p);
-	error = VOP_CLOSE(vp, FREAD, cred, p);
+	err2 = VOP_CLOSE(vp, FREAD, cred, p);
 	ubc_rele(vp);
 	vrele(vp);
 	return (error);

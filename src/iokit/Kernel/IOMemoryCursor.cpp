@@ -119,21 +119,65 @@ IOMemoryCursor::genPhysicalSegments(IOMemoryDescriptor *inDescriptor,
      * If we finished cleanly return number of segments found
      * and update the position in the descriptor.
      */
+    PhysicalSegment curSeg = { 0 };
     UInt curSegIndex = 0;
     UInt curTransferSize = 0;
-    PhysicalSegment seg;
+    IOByteCount inDescriptorLength = inDescriptor->getLength();
+    PhysicalSegment seg = { 0 };
 
-    while ((curSegIndex < inMaxSegments)
-    &&  (curTransferSize < inMaxTransferSize)
-    &&  (seg.location = inDescriptor->getPhysicalSegment(
-                            fromPosition + curTransferSize, &seg.length)))
+    while ((seg.location) || (fromPosition < inDescriptorLength)) 
     {
-        assert(seg.length);
-        seg.length = min(inMaxTransferSize-curTransferSize,
-                         (min(seg.length, maxSegmentSize)));
-        (*outSeg)(seg, inSegments, curSegIndex++);
-        curTransferSize += seg.length;
+        if (!seg.location)
+        {
+            seg.location = inDescriptor->getPhysicalSegment(
+                               fromPosition, &seg.length);
+            assert(seg.location);
+            assert(seg.length);
+            fromPosition += seg.length;
+        }
+
+        if (!curSeg.location)
+        {
+            curTransferSize += seg.length;
+            curSeg = seg;
+            seg.location = 0;
+        }
+        else if ((curSeg.location + curSeg.length == seg.location))
+        {
+            curTransferSize += seg.length;
+            curSeg.length += seg.length;
+            seg.location = 0;
+        }
+
+        if (!seg.location)
+        {
+            if ((curSeg.length > maxSegmentSize))
+            {
+                seg.location = curSeg.location + maxSegmentSize;
+                seg.length = curSeg.length - maxSegmentSize;
+                curTransferSize -= seg.length;
+                curSeg.length -= seg.length;
+            }
+
+            if ((curTransferSize >= inMaxTransferSize))
+            {
+                curSeg.length -= curTransferSize - inMaxTransferSize;
+                curTransferSize = inMaxTransferSize;
+                break;
+            }
+        }
+
+        if (seg.location)
+        {
+            if ((curSegIndex + 1 == inMaxSegments))
+                break;
+            (*outSeg)(curSeg, inSegments, curSegIndex++);
+            curSeg.location = 0;
+        }
     }
+
+    if (curSeg.location)
+        (*outSeg)(curSeg, inSegments, curSegIndex++);
 
     if (outTransferSize)
         *outTransferSize = curTransferSize;

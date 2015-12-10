@@ -103,6 +103,7 @@ void ppc_init(boot_args *args)
 	unsigned int	cputrace;
 	unsigned int	novmx;
 	extern vm_offset_t static_memory_end;
+	thread_t		thread;
 	mapping *mp;
 	
 	/*
@@ -116,23 +117,10 @@ void ppc_init(boot_args *args)
 	per_proc_info[0].debstackptr = debstackptr;
 	per_proc_info[0].debstack_top_ss = debstack_top_ss;
 	per_proc_info[0].interrupts_enabled = 0;
-	per_proc_info[0].active_kloaded = (unsigned int)
-		&active_kloaded[0];
-	set_machine_current_thread(&pageout_thread);
-	set_machine_current_act(&pageout_act);
-	pageout_thread.top_act = &pageout_act;
-	pageout_act.thread = &pageout_thread;
-	pageout_act.mact.curctx = &pageout_act.mact.facctx;
-	pageout_act.mact.facctx.facAct = &pageout_act;
-	pageout_act.mact.cioSpace = invalSpace;					/* Initialize copyin/out space to invalid */
-	pageout_act.mact.preemption_count = 1;
 	per_proc_info[0].pp_preemption_count = -1;
 	per_proc_info[0].pp_simple_lock_count = 0;
 	per_proc_info[0].pp_interrupt_level = 0;
-	per_proc_info[0].active_stacks = (unsigned int)
-		&active_stacks[0];
-	per_proc_info[0].need_ast = (unsigned int)
-		&need_ast[0];
+	per_proc_info[0].need_ast = (unsigned int)&need_ast[0];
 	per_proc_info[0].FPU_owner = 0;
 	per_proc_info[0].VMX_owner = 0;
 	mp = (mapping *)per_proc_info[0].ppCIOmp;
@@ -140,6 +128,14 @@ void ppc_init(boot_args *args)
 	mp->mpSpace = invalSpace;
 
 	machine_slot[0].is_cpu = TRUE;
+
+	thread_bootstrap();
+
+	thread = current_act();
+	thread->mact.curctx = &thread->mact.facctx;
+	thread->mact.facctx.facAct = thread;
+	thread->mact.cioSpace = invalSpace;					/* Initialize copyin/out space to invalid */
+	thread->mact.preemption_count = 1;
 
 	cpu_init();
 
@@ -209,8 +205,10 @@ ppc_init_cpu(
 {
 	int i;
 
+	proc_info->cpu_flags &= ~SleepState;
+
 	if(!(proc_info->next_savearea)) 		/* Do we have a savearea set up already? */
-		proc_info->next_savearea = (vm_offset_t)save_get_init();	/* Get a savearea  */
+		proc_info->next_savearea = (uint64_t)save_get_init();	/* Get a savearea  */
 	
 	cpu_init();
 	

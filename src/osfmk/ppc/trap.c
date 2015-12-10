@@ -73,7 +73,7 @@ extern boolean_t db_breakpoints_inserted;
 extern int debugger_active[NCPUS];
 extern task_t bsd_init_task;
 extern char init_task_failure_data[];
-
+extern int not_in_kdp;
 
 #define	PROT_EXEC	(VM_PROT_EXECUTE)
 #define PROT_RO		(VM_PROT_READ)
@@ -145,7 +145,7 @@ struct savearea *trap(int trapno,
 	      	switch (trapno) {
 
 		case T_PREEMPT:			/* Handle a preempt trap */
-			ast_taken(AST_PREEMPT, FALSE);
+			ast_taken(AST_PREEMPTION, FALSE);
 			break;	
 
 		case T_PERF_MON:
@@ -227,7 +227,6 @@ struct savearea *trap(int trapno,
 			break;
 
 		case T_DATA_ACCESS:
-
 #if	MACH_KDB
 			mp_disable_preemption();
 			if (debug_mode
@@ -240,6 +239,16 @@ struct savearea *trap(int trapno,
 			}
 			mp_enable_preemption();
 #endif	/* MACH_KDB */
+			/* can we take this during normal panic dump operation? */
+			if (debug_mode
+			    && debugger_active[cpu_number()]
+			    && !not_in_kdp) {
+			        /* 
+				 * Access fault while in kernel core dump.
+				 */
+			        kdp_dump_trap(trapno, ssp); 
+			}
+
 
 			if(ssp->save_dsisr & dsiInvMode) {			/* Did someone try to reserve cache inhibited? */
 				panic("trap: disallowed access to cache inhibited memory - %016llX\n", dar);
@@ -480,7 +489,7 @@ struct savearea *trap(int trapno,
 				unsigned int inst;
 				char *iaddr;
 				
-				iaddr = (char *)ssp->save_srr0;		/* Trim from long long and make a char pointer */
+				iaddr = CAST_DOWN(char *, ssp->save_srr0);		/* Trim from long long and make a char pointer */ 
 				if (copyin(iaddr, (char *) &inst, 4 )) panic("copyin failed\n");
 				
 				if(dgWork.dgFlags & enaDiagTrap) {	/* Is the diagnostic trap enabled? */

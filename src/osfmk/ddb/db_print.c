@@ -434,7 +434,7 @@ db_print_task(
 	    db_printf("%3d: %0*X %0*X %3d %3d %3d %2d %c  ",
 			    task_id, 2*sizeof(vm_offset_t), task,
 			    2*sizeof(vm_offset_t), task->map,
-			    task->thr_act_count, task->res_act_count,
+			    task->thread_count, task->res_thread_count,
 			    task->suspend_count,
 			    task->priority,
 			    sstate);
@@ -443,10 +443,10 @@ db_print_task(
 		if (flag & OPTION_TASK_TITLE)
 		    flag |= OPTION_THREAD_TITLE;
 		db_printf("\n");
-	    } else if (task->thr_act_count <= 1)
+	    } else if (task->thread_count <= 1)
 		flag &= ~OPTION_INDENT;
 	    act_id = 0;
-	    queue_iterate(&task->thr_acts, thr_act, thread_act_t, thr_acts) {
+	    queue_iterate(&task->threads, thr_act, thread_act_t, task_threads) {
 		db_print_act(thr_act, act_id, flag);
 		flag &= ~OPTION_THREAD_TITLE;
 		act_id++;
@@ -457,22 +457,22 @@ db_print_task(
 	    if (flag & OPTION_LONG) {
 		if (flag & OPTION_TASK_TITLE) {
 		    db_printf("    TASK        ACT\n");
-		    if (task->thr_act_count > 1)
+		    if (task->thread_count > 1)
 			flag |= OPTION_THREAD_TITLE;
 		}
 	    }
 	    db_printf("%3d (%0*X): ", task_id, 2*sizeof(vm_offset_t), task);
-	    if (task->thr_act_count == 0) {
+	    if (task->thread_count == 0) {
 		db_printf("no threads\n");
 	    } else {
-		if (task->thr_act_count > 1) {
-		    db_printf("%d threads: \n", task->thr_act_count);
+		if (task->thread_count > 1) {
+		    db_printf("%d threads: \n", task->thread_count);
 		    flag |= OPTION_INDENT;
 		} else
 		    flag &= ~OPTION_INDENT;
 		act_id = 0;
-		queue_iterate(&task->thr_acts, thr_act,
-			      thread_act_t, thr_acts) {
+		queue_iterate(&task->threads, thr_act,
+			      thread_act_t, task_threads) {
 		    db_print_act(thr_act, act_id++, flag);
 		    flag &= ~OPTION_THREAD_TITLE;
 		}
@@ -487,7 +487,7 @@ db_print_space(
 	int	flag)
 {
 	ipc_space_t space;
-	thread_act_t act = (thread_act_t)queue_first(&task->thr_acts);
+	thread_act_t act = (thread_act_t)queue_first(&task->threads);
 	int count;
 
 	count = 0;
@@ -789,11 +789,11 @@ db_show_shuttle(
 	db_expr_t	count,
 	char *		modif)
 {
-	thread_shuttle_t	shuttle;
+	thread_t			shuttle;
 	thread_act_t		thr_act;
 
 	if (have_addr)
-	    shuttle = (thread_shuttle_t) addr;
+	    shuttle = (thread_t) addr;
 	else {
 	    thr_act = current_act();
 	    if (thr_act == THR_ACT_NULL) {

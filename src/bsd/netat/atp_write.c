@@ -70,7 +70,7 @@ static int loop_cnt; /* for debugging loops */
 static void atp_pack_bdsp(struct atp_trans *, struct atpBDS *);
 static int atp_unpack_bdsp(struct atp_state *, gbuf_t *, struct atp_rcb *, 
 			   int, int);
-void atp_retry_req(), atp_trp_clock(), asp_clock(), asp_clock_funnel(), atp_trp_clock_funnel();;
+void atp_trp_clock(), asp_clock(), asp_clock_funnel(), atp_trp_clock_funnel();;
 
 extern struct atp_rcb_qhead atp_need_rel;
 extern int atp_inited;
@@ -1260,9 +1260,10 @@ l_retry:
 	}
 } /* atp_send_req */
 
-void atp_retry_req(m)
-	gbuf_t *m;
+void atp_retry_req(arg)
+	void *arg;
 {
+	gbuf_t *m = (gbuf_t *)arg;
 	gref_t *gref;
 	boolean_t 	funnel_state;
 
@@ -1606,7 +1607,7 @@ _ATPsndreq(fd, buf, len, nowait, err, proc)
 	/*
 	 * copy out the recv data
 	 */
-	atp_pack_bdsp(trp, bds);
+	atp_pack_bdsp(trp, (struct atpBDS *)bds);
 
 	/*
 	 * copyout the result info
@@ -1842,7 +1843,7 @@ _ATPgetrsp(fd, bdsp, err, proc)
 			if ((*err = copyin((caddr_t)bdsp,
 					(caddr_t)bds, sizeof(bds))) != 0)
 				return -1;
-			atp_pack_bdsp(trp, bds);
+			atp_pack_bdsp(trp, (struct atpBDS *)bds);
 			tid = (int)trp->tr_tid;
 			atp_free(trp);
 			copyout((caddr_t)bds, (caddr_t)bdsp, sizeof(bds));

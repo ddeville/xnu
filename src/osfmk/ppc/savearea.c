@@ -277,7 +277,7 @@ void save_adjust(void) {
 		sctl = (savearea_comm *)save_trim_free();		/* Trim list to the need count, return start of trim list */
 				
 		while(sctl) {									/* Release the free pages back to the kernel */
-			sctlnext = (savearea_comm *)sctl->save_prev;	/* Get next in list */
+			sctlnext = CAST_DOWN(savearea_comm *, sctl->save_prev);	/* Get next in list */  
 			kmem_free(kernel_map, (vm_offset_t) sctl, PAGE_SIZE);	/* Release the page */
 			sctl = sctlnext;							/* Chain onwards */
 		}
@@ -300,7 +300,7 @@ void save_adjust(void) {
 			
 			bzero((void *)freepage, PAGE_SIZE);			/* Clear it all to zeros */
 			freepage->sac_alloc = 0;					/* Mark all entries taken */
-			freepage->sac_vrswap = ((uint64_t)physpage << 12) ^ (uint64_t)freepage;	/* XOR to calculate conversion mask */
+			freepage->sac_vrswap = ((uint64_t)physpage << 12) ^ (uint64_t)((uintptr_t)freepage);	/* XOR to calculate conversion mask */
 	
 			freepage->sac_flags |= 0x0000EE00;			/* Set debug eyecatcher */
 						

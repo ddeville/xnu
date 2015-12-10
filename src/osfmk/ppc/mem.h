@@ -43,14 +43,14 @@ void hash_table_init(vm_offset_t base, vm_offset_t size);
 
 #define MAX_BAT		4
 
-#pragma pack(1)							/* Make sure the structure stays as we defined it */
+#pragma pack(4)							/* Make sure the structure stays as we defined it */
 typedef struct ppcBAT {
 	unsigned int	upper;	/* Upper half of BAT */
 	unsigned int	lower;	/* Lower half of BAT */
 } ppcBAT;
 #pragma pack()
 
-#pragma pack(1)							/* Make sure the structure stays as we defined it */
+#pragma pack(4)							/* Make sure the structure stays as we defined it */
 struct shadowBAT {
 	ppcBAT	IBATs[MAX_BAT];	/* Instruction BATs */
 	ppcBAT	DBATs[MAX_BAT];	/* Data BAT */

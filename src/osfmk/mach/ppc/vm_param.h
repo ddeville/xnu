@@ -1,3 +1,4 @@
+
 /*
  * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
  *
@@ -33,8 +34,10 @@
 #define PPC_PGBYTES	4096	/* bytes per ppc page */
 #define PPC_PGSHIFT	12	/* number of bits to shift for pages */
 
+#define VM_MAX_PAGE_ADDRESS     0xFFFFFFFFFFFFF000ULL
+
 #define VM_MIN_ADDRESS	((vm_offset_t) 0)
-#define VM_MAX_ADDRESS	((vm_offset_t) 0xfffff000U)
+#define VM_MAX_ADDRESS	((vm_offset_t) (VM_MAX_PAGE_ADDRESS & 0xFFFFFFFF))
 
 #define VM_MIN_KERNEL_ADDRESS	((vm_offset_t) 0x00001000)
 

@@ -45,8 +45,6 @@ extern dev_t mdevlookup(int devid);
 kern_return_t
 IOKitBSDInit( void )
 {
-    IOLog("IOKitBSDInit\n");
-
     IOService::publishResource("IOBSD");
  
     return( kIOReturnSuccess );
@@ -80,26 +78,26 @@ OSDictionary * IOBSDNameMatching( const char * name )
     return( 0 );
 }
 
-OSDictionary * IOCDMatching( const char * name )
+OSDictionary * IOCDMatching( void )
 {
     OSDictionary *	dict;
     const OSSymbol *	str;
-
-	dict = IOService::serviceMatching( "IOMedia" );
-	if( dict == 0 ) {
-	   IOLog("Unable to find IOMedia\n");
-	   return 0;
-	} 
-
-	str = OSSymbol::withCString( "CD_ROM_Mode_1" );
-	if( str == 0 ) {
-	    dict->release();
-	    return 0;
-	}
-
-	dict->setObject( "Content", (OSObject *)str );
-	str->release();
-        return( dict );
+    
+    dict = IOService::serviceMatching( "IOMedia" );
+    if( dict == 0 ) {
+        IOLog("Unable to find IOMedia\n");
+        return 0;
+    }
+    
+    str = OSSymbol::withCString( "CD_ROM_Mode_1" );
+    if( str == 0 ) {
+        dict->release();
+        return 0;
+    }
+    
+    dict->setObject( "Content Hint", (OSObject *)str );
+    str->release();        
+    return( dict );
 }
 
 OSDictionary * IONetworkMatching(  const char * path,
@@ -258,23 +256,42 @@ OSDictionary * IODiskMatching( const char * path, char * buf, int maxLen )
     char *       comp;
     long         unit = -1;
     long         partition = -1;
+    long		 lun = -1;
     char         c;
+    const char * partitionSep = NULL;
 
     // scan the tail of the path for "@unit:partition"
     do {
         // Have to get the full path to the controller - an alias may
         // tell us next to nothing, like "hd:8"
         alias = IORegistryEntry::dealiasPath( &path, gIODTPlane );
-
+		
         look = path + strlen( path);
         c = ':';
         while( look != path) {
             if( *(--look) == c) {
                 if( c == ':') {
                     partition = strtol( look + 1, 0, 0 );
+                    partitionSep = look;
                     c = '@';
                 } else if( c == '@') {
+                    int diff = -1;
+                    
                     unit = strtol( look + 1, 0, 16 );
+                    
+                    diff = (int)partitionSep - (int)look;
+                    if ( diff > 0 ) {
+                    	
+                    	for ( ; diff > 0; diff-- )
+                    	{
+                    		if( look[diff] == ',' )
+                    		{
+                    		   lun = strtol ( &look[diff + 1], 0, 16 );
+                    		   break;
+                    		}
+                    	}
+                    }
+                    
                     c = '/';
                 } else if( c == '/') {
                     c = 0;
@@ -290,29 +307,36 @@ OSDictionary * IODiskMatching( const char * path, char * buf, int maxLen )
         }
         if( c || unit == -1 || partition == -1)
             continue;
-
+		
         maxLen -= strlen( "{" kIOPathMatchKey "='" kIODeviceTreePlane ":" );
         maxLen -= ( alias ? strlen( alias ) : 0 ) + (look - path);
-        maxLen -= strlen( "/@hhhhhhhh:dddddddddd';}" );
+        maxLen -= strlen( "/@hhhhhhhh,hhhhhhhh:dddddddddd';}" );
 
         if( maxLen > 0) {
             sprintf( buf, "{" kIOPathMatchKey "='" kIODeviceTreePlane ":" );
             comp = buf + strlen( buf );
-
+			
             if( alias) {
                 strcpy( comp, alias );
                 comp += strlen( alias );
             }
-
+			
             if ( (look - path)) {
                 strncpy( comp, path, look - path);
                 comp += look - path;
             }
-
-            sprintf( comp, "/@%lx:%ld';}", unit, partition );
+			
+			if ( lun != -1 )
+			{
+				sprintf ( comp, "/@%lx,%lx:%ld';}", unit, lun, partition );
+			}
+			else
+			{
+            	sprintf( comp, "/@%lx:%ld';}", unit, partition );
+            }
         } else
             continue;
-
+		
         return( OSDynamicCast(OSDictionary, OSUnserialize( buf, 0 )) );
 
     } while( false );
@@ -327,6 +351,42 @@ OSDictionary * IOOFPathMatching( const char * path, char * buf, int maxLen )
 
     return( IODiskMatching( path, buf, maxLen ));
 
+}
+
+IOService * IOFindMatchingChild( IOService * service )
+{
+    // find a matching child service
+    IOService * child = 0;
+    OSIterator * iter = service->getClientIterator();
+    if ( iter ) {
+        while( ( child = (IOService *) iter->getNextObject() ) ) {
+            OSDictionary * dict = OSDictionary::withCapacity( 1 );
+            if( dict == 0 ) {
+                iter->release();
+                return 0;
+            }
+            const OSSymbol * str = OSSymbol::withCString( "Apple_HFS" );
+            if( str == 0 ) {
+                dict->release();
+                iter->release();
+                return 0;
+            }
+            dict->setObject( "Content", (OSObject *)str );
+            str->release();
+            if ( child->compareProperty( dict, "Content" ) ) {
+                dict->release();
+                break;
+            }
+            dict->release();
+            IOService * subchild = IOFindMatchingChild( child );
+            if ( subchild ) {
+                child = subchild;
+                break;
+            }
+        }
+        iter->release();
+    }
+    return child;
 }
 
 static int didRam = 0;
@@ -345,6 +405,7 @@ kern_return_t IOFindBSDRoot( char * rootName,
 
     UInt32		flags = 0;
     int			minor, major;
+    bool		findHFSChild = false;
     char *		rdBootVar;
     enum {		kMaxPathBuf = 512, kMaxBootVar = 128 };
     char *		str;
@@ -356,7 +417,7 @@ kern_return_t IOFindBSDRoot( char * rootName,
     static int		mountAttempts = 0;
 				
 	int xchar, dchar;
-				
+                                    
 
     if( mountAttempts++)
 	IOSleep( 5 * 1000 );
@@ -466,8 +527,9 @@ kern_return_t IOFindBSDRoot( char * rootName,
     
 	if ( strncmp( look, "en", strlen( "en" )) == 0 ) {
 	    matching = IONetworkNamePrefixMatching( "en" );
-	} else if ( strncmp( look, "cdrom", strlen( "cdrom" )) == 0 ) { 
-	    matching = IOCDMatching( look );
+	} else if ( strncmp( look, "cdrom", strlen( "cdrom" )) == 0 ) {
+            matching = IOCDMatching();
+            findHFSChild = true;
 	} else {
 	    matching = IOBSDNameMatching( look );
 	}
@@ -475,9 +537,9 @@ kern_return_t IOFindBSDRoot( char * rootName,
 
     if( !matching) {
         OSString * astring;
-	// any UFS
+	// any HFS
         matching = IOService::serviceMatching( "IOMedia" );
-        astring = OSString::withCStringNoCopy("Apple_UFS");
+        astring = OSString::withCStringNoCopy("Apple_HFS");
         if ( astring ) {
             matching->setObject("Content", astring);
             astring->release();
@@ -518,6 +580,23 @@ kern_return_t IOFindBSDRoot( char * rootName,
 	}
     } while( !service);
     matching->release();
+
+    if ( service && findHFSChild ) {
+        bool waiting = true;
+        // wait for children services to finish registering
+        while ( waiting ) {
+            t.tv_sec = ROOTDEVICETIMEOUT;
+            t.tv_nsec = 0;
+            if ( service->waitQuiet( &t ) == kIOReturnSuccess ) {
+                waiting = false;
+            } else {
+                IOLog( "Waiting for child registration\n" );
+            }
+        }
+        // look for a subservice with an Apple_HFS child
+        IOService * subservice = IOFindMatchingChild( service );
+        if ( subservice ) service = subservice;
+    }
 
     major = 0;
     minor = 0;

@@ -733,6 +733,23 @@ CheckPreemption:
 			sc										; Preempt
 			blr
 
+/*  Emulate a decremeter exception
+ *
+ *	void machine_clock_assist(void)
+ *
+ */
+
+;			Force a line boundry here
+			.align  5
+			.globl  EXT(machine_clock_assist)
+ 
+LEXT(machine_clock_assist)
+
+			mfsprg	r7,0
+			lwz		r4,PP_INTS_ENABLED(r7)
+			mr.		r4,r4
+			bnelr+	cr0
+			b	EXT(CreateFakeDEC)
 
 /*  Set machine into idle power-saving mode. 
  *
@@ -976,7 +993,12 @@ mpsNoMSRx:
 			mfmsr	r5								; Get the current MSR
 			oris	r5,r5,hi16(MASK(MSR_POW))		; Turn on power management in next MSR
 													; Leave EE off because power goes off shortly
-
+			mfsprg	r12,0							; Get the per_proc_info
+			li		r10,PP_CPU_FLAGS
+			lhz		r11,PP_CPU_FLAGS(r12)			; Get the flags
+			ori		r11,r11,SleepState				; Marked SleepState
+			sth		r11,PP_CPU_FLAGS(r12)			; Set the flags
+			dcbf	r10,r12
 slSleepNow:
 			sync									; Sync it all up
 			mtmsr	r5								; Do sleep with interruptions enabled
@@ -1281,7 +1303,7 @@ ciswfldl2a:	lwz		r0,0(r10)						; Load something to flush something
 			addi	r10,r10,32						; Next line
 			bdnz	ciswfldl2a						; Do the lot...
 			
-ciinvdl2:	rlwinm	r3,r3,0,l2e+1,31				; Clear the enable bit
+ciinvdl2:	rlwinm	r8,r3,0,l2e+1,31				; Clear the enable bit
 			b		cinla							; Branch to next line...
 
 			.align  5
@@ -1653,7 +1675,7 @@ cinlbb:		sync									; Finish memory stuff
 			b		cinlcc							; Jump back up and turn off cache...
 
 cdNoL2:
-			
+
 			bf		pfL3b,cdNoL3					; Skip down if no L3...
 			
 			mfspr	r5,l3cr							; Get the L3
@@ -1899,38 +1921,10 @@ loop:
 			.globl	EXT(cpu_number)
 
 LEXT(cpu_number)
-
-			mfsprg	r7,0							; Get per-proc block
-			lhz		r3,PP_CPU_NUMBER(r7)			; Get CPU number 
+			mfsprg	r4,0							; Get per-proc block
+			lhz		r3,PP_CPU_NUMBER(r4)			; Get CPU number 
 			blr										; Return...
 
-/*
- *		thread_t current_thread(void)
- *
- *			Return the active thread for both inside and outside osfmk consumption
- */
-			.align	5
-			.globl	EXT(current_thread)
-
-LEXT(current_thread)
-
-			mfsprg	r3,1
-			lwz		r3,ACT_THREAD(r3)
-			blr
-
-/*
- *		set_machine_current_thread(thread_t)
- *
- *			Set the active thread 
- */
-			.align	5
-			.globl	EXT(set_machine_current_thread)
-
-LEXT(set_machine_current_thread)
-
-			mfsprg	r6,0							; Get the per_proc
-			stw		r3,PP_ACTIVE_THREAD(r6)			; Set the active thread
-			blr										; Return...
 
 /*
  *		void set_machine_current_act(thread_act_t)
@@ -1946,31 +1940,44 @@ LEXT(set_machine_current_act)
 			blr										; Return...
 
 /*
- *		thread_act_t current_act(void)
+ *		thread_t current_act(void)
+ *		thread_t current_thread(void)
  *
- *			Return the current activation
+ *
+ *			Return the current thread for outside components.
  */
 			.align	5
 			.globl	EXT(current_act)
+			.globl	EXT(current_thread)
 
 LEXT(current_act)
+LEXT(current_thread)
 
 			mfsprg	r3,1
 			blr
 
-/*
- *		cpu_data_t* get_cpu_data(void)
- *
- *			Return the cpu_data
- */
 			.align	5
-			.globl	EXT(get_cpu_data)
+			.globl	EXT(clock_get_uptime)
+LEXT(clock_get_uptime)
+1:			mftbu	r9
+			mftb	r0
+			mftbu	r11
+			cmpw	r11,r9
+			bne-	1b
+			stw		r0,4(r3)
+			stw		r9,0(r3)
+			blr
 
-LEXT(get_cpu_data)
- 
-			mfsprg	r3,0							; Get the per_proc
-			addi	r3,r3,PP_ACTIVE_THREAD			; Get the pointer to the CPU data from per proc
-			blr										; Return...
+		
+			.align	5
+			.globl	EXT(mach_absolute_time)
+LEXT(mach_absolute_time)
+1:			mftbu	r3
+			mftb	r4
+			mftbu	r0
+			cmpw	r0,r3
+			bne-	1b  
+			blr
 
 /*
 **      ml_sense_nmi()

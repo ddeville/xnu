@@ -146,8 +146,8 @@ simple_locks_held:
 			andc	r10,r11,r10						__ASMNL__	\
 			mtmsr	r10								__ASMNL__	\
 			isync									__ASMNL__	\
-			mfsprg	r10,0							__ASMNL__	\
-			lwz		r10,PP_ACTIVE_THREAD(r10)		__ASMNL__	\
+			mfsprg	r10,1							__ASMNL__	\
+			lwz		r10,ACT_THREAD(r10)				__ASMNL__	\
 			cmpwi	r10,0	 						__ASMNL__ 	\
 			beq-	1f 								__ASMNL__ 	\
 			lwz		r9,thread_offset(r3) 			__ASMNL__ 	\
@@ -175,8 +175,8 @@ wrong_thread:
 			andc	r10,r11,r10						__ASMNL__	\
 			mtmsr	r10								__ASMNL__	\
 			isync									__ASMNL__	\
-			mfsprg	r10,0							__ASMNL__	\
-			lwz		r10,PP_ACTIVE_THREAD(r10)		__ASMNL__	\
+			mfsprg	r10,1							__ASMNL__	\
+			lwz		r10,ACT_THREAD(r10)				__ASMNL__	\
 			cmpwi	r10,0	 						__ASMNL__	\
 			beq-	1f 								__ASMNL__	\
 			lwz		r9,	thread_offset(r3) 			__ASMNL__	\
@@ -950,7 +950,9 @@ L_mutex_lock_slow:
 			bne		L_mutex_lock_assert_wait_1
 			lis		r3,hi16(L_mutex_lock_assert_wait_panic_str)
 			ori		r3,r3,lo16(L_mutex_lock_assert_wait_panic_str)
+			PROLOG(0)
 			bl		EXT(panic)
+			BREAKPOINT_TRAP							; We die here anyway
 
 			.data
 L_mutex_lock_assert_wait_panic_str:
@@ -971,6 +973,7 @@ L_mutex_lock_assert_wait_1:
 
 			lis		r3,hi16(mutex_failed1)			; Get the failed mutex message
 			ori		r3,r3,lo16(mutex_failed1)		; Get the failed mutex message
+			PROLOG(0)
 			bl		EXT(panic)						; Call panic
 			BREAKPOINT_TRAP							; We die here anyway, can not get the lock
 	
@@ -994,10 +997,10 @@ mlGotInt:
 			mfmsr	r11								; Note: no need to deal with fp or vec here
 			andc	r5,r11,r5
 			mtmsr	r5
-			mfsprg	r9,0							; Get the per_proc block
+			mfsprg	r9,1							; Get the current activation
 			lwz		r5,0(r1)						; Get previous save frame
 			lwz		r5,FM_LR_SAVE(r5)				; Get our caller's address
-			lwz		r8,	PP_ACTIVE_THREAD(r9)		; Get the active thread
+			lwz		r8,	ACT_THREAD(r9)				; Get the active thread
 			stw		r5,MUTEX_PC(r3)					; Save our caller
 			mr.		r8,r8							; Is there any thread?
 			stw		r8,MUTEX_THREAD(r3)				; Set the mutex's holding thread
@@ -1092,6 +1095,7 @@ L_mutex_try_slow:
 
 			lis		r3,hi16(mutex_failed2)			; Get the failed mutex message
 			ori		r3,r3,lo16(mutex_failed2)		; Get the failed mutex message
+			PROLOG(0)
 			bl		EXT(panic)						; Call panic
 			BREAKPOINT_TRAP							; We die here anyway, can not get the lock
 	
@@ -1119,10 +1123,10 @@ mtGotInt:
 			andc	r5,r11,r5						; Clear EE as well
 
 			mtmsr	r5
-			mfsprg	r9,0							; Get the per_proc block
+			mfsprg	r9,1							; Get the current activation
 			lwz		r5,0(r1)						; Get previous save frame
 			lwz		r5,FM_LR_SAVE(r5)				; Get our caller's address
-			lwz		r8,	PP_ACTIVE_THREAD(r9)		; Get the active thread
+			lwz		r8,ACT_THREAD(r9)				; Get the active thread
 			stw		r5,MUTEX_PC(r3)					; Save our caller
 			mr.		r8,r8							; Is there any thread?
 			stw		r8,MUTEX_THREAD(r3)				; Set the mutex's holding thread
@@ -1239,6 +1243,7 @@ L_mutex_unlock_slow:
 
 			lis		r3,hi16(mutex_failed3)			; Get the failed mutex message
 			ori		r3,r3,lo16(mutex_failed3)		; Get the failed mutex message
+			PROLOG(0)
 			bl		EXT(panic)						; Call panic
 			BREAKPOINT_TRAP							; We die here anyway, can not get the lock
 	
@@ -1268,8 +1273,8 @@ muUnlock:
 			andc	r9,r11,r9						; Clear EE as well
 
 			mtmsr	r9
-			mfsprg	r9,0					
-			lwz		r9,PP_ACTIVE_THREAD(r9)
+			mfsprg	r9,1					
+			lwz		r9,ACT_THREAD(r9)
 			stw		r9,MUTEX_THREAD(r3)				; disown thread
 			cmpwi	r9,0
 			beq-	.L_mu_no_active_thread
@@ -1286,6 +1291,82 @@ muUnlock:
 
 			EPILOG									; Deal with the stack now, enable_preemption doesn't always want one
 			b		epStart							; Go enable preemption...
+
+/*
+ *  boolean_t mutex_preblock(mutex_t*, thread_t)
+ */
+			.align  5
+			.globl  EXT(mutex_preblock)
+
+LEXT(mutex_preblock)
+			mr		r6,r3
+			lwz		r5,LOCK_DATA(r3)
+			mr.		r3,r5
+			beqlr+
+			mr		r3,r6
+
+			PROLOG(0)
+			stw		r4,(FM_ARG0-4)(r1)
+
+			bl		EXT(hw_lock_try)
+			mr.		r4,r3
+			lwz		r3,FM_ARG0(r1)
+			bne+	mpbGotInt
+
+			li		r3,0
+
+			EPILOG
+
+			blr
+
+mpbGotInt:
+			lwz		r6,LOCK_DATA(r3)
+			rlwinm.	r5,r6,0,0,30
+			bne+	mpbInUse
+
+			stw		r5,LOCK_DATA(r3)
+
+			bl		epStart
+		
+			li		r3,0
+				
+			EPILOG
+
+			blr
+
+mpbInUse:
+			lwz		r4,(FM_ARG0-4)(r1)
+			rlwinm	r5,r6,0,0,29
+			bl		EXT(mutex_preblock_wait)
+			lwz		r4,FM_ARG0(r1)
+			mr.		r3,r3
+			lwz		r5,LOCK_DATA(r4)
+			rlwinm	r5,r5,0,0,30
+			beq-	mpbUnlock0
+			ori		r5,r5,WAIT_FLAG
+
+			eieio
+			stw		r5,LOCK_DATA(r4)
+
+			bl		epStart
+
+			li		r3,1
+
+			EPILOG
+
+			blr
+
+mpbUnlock0:
+			eieio
+			stw		r5,LOCK_DATA(r4)
+
+			bl		epStart
+
+			li		r3,0
+
+			EPILOG
+
+			blr
 
 /*
  *		void interlock_unlock(hw_lock_t lock)
@@ -1354,7 +1435,9 @@ epTooFar:
 			mr		r4,r5
 			lis		r3,hi16(epTooFarStr)			; First half of panic string
 			ori		r3,r3,lo16(epTooFarStr)			; Second half of panic string
+			PROLOG(0)
 			bl		EXT(panic)
+			BREAKPOINT_TRAP							; We die here anyway
 
 			.data
 epTooFarStr:
@@ -1553,7 +1636,9 @@ slckfail:											; We couldn't get the lock
 			ori		r3,r3,lo16(slckpanic_str)
 			mr		r4,r5
 			mflr	r5
+			PROLOG(0)
 			bl		EXT(panic)
+			BREAKPOINT_TRAP							; We die here anyway
 
 		.data
 slckpanic_str:

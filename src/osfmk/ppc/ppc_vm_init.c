@@ -100,6 +100,8 @@ vm_offset_t sectLINKB;
 int sectSizeLINK;
 vm_offset_t sectKLDB;
 int sectSizeKLD;
+vm_offset_t sectPRELINKB;
+int sectSizePRELINK;
 
 vm_offset_t end, etext, edata;
 
@@ -217,6 +219,8 @@ void ppc_vm_init(uint64_t mem_limit, boot_args *args)
 		&_mh_execute_header, "__LINKEDIT", &sectSizeLINK);
 	sectKLDB = (vm_offset_t)getsegdatafromheader(
 		&_mh_execute_header, "__KLD", &sectSizeKLD);
+	sectPRELINKB = (vm_offset_t)getsegdatafromheader(
+		&_mh_execute_header, "__PRELINK", &sectSizePRELINK);
 
 	etext = (vm_offset_t) sectTEXTB + sectSizeTEXT;
 	edata = (vm_offset_t) sectDATAB + sectSizeDATA;
@@ -227,6 +231,7 @@ void ppc_vm_init(uint64_t mem_limit, boot_args *args)
 		(round_page_32(sectDATAB+sectSizeDATA) - trunc_page_32(sectDATAB)) +
 		(round_page_32(sectLINKB+sectSizeLINK) - trunc_page_32(sectLINKB)) +
 		(round_page_32(sectKLDB+sectSizeKLD) - trunc_page_32(sectKLDB)) +
+		(round_page_32(sectPRELINKB+sectSizePRELINK) - trunc_page_32(sectPRELINKB)) +
 		(round_page_32(static_memory_end) - trunc_page_32(end));
 
 	pmap_bootstrap(max_mem, &first_avail, kmapsize);
@@ -245,6 +250,16 @@ void ppc_vm_init(uint64_t mem_limit, boot_args *args)
 * to map both segments page-by-page.
 */
 	
+	for (addr = trunc_page_32(sectPRELINKB);
+             addr < round_page_32(sectPRELINKB+sectSizePRELINK);
+             addr += PAGE_SIZE) {
+
+            pmap_enter(kernel_pmap, addr, addr>>12, 
+			VM_PROT_READ|VM_PROT_WRITE, 
+			VM_WIMG_USE_DEFAULT, TRUE);
+
+	}
+
 	for (addr = trunc_page_32(sectKLDB);
              addr < round_page_32(sectKLDB+sectSizeKLD);
              addr += PAGE_SIZE) {

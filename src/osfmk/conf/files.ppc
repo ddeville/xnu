@@ -24,6 +24,7 @@ osfmk/ppc/bcopytest.c		optional mach_kdb
 osfmk/ppc/lowmem_vectors.s	standard
 osfmk/ppc/start.s			standard
 osfmk/ppc/_setjmp.s			standard
+osfmk/ppc/mcount.s			optional profile
 
 osfmk/ppc/cpu.c 			standard
 osfmk/ppc/ppc_init.c		standard
@@ -86,17 +87,23 @@ osfmk/ppc/commpage/pthread.s	standard
 osfmk/ppc/commpage/spinlocks.s	standard
 osfmk/ppc/commpage/bigcopy_970.s	standard
 
+osfmk/ppc/chud/chud_osfmk_callback.c	standard
+osfmk/ppc/chud/chud_cpu.c		standard
+osfmk/ppc/chud/chud_cpu_asm.s	standard
+osfmk/ppc/chud/chud_memory.c	standard
+osfmk/ppc/chud/chud_thread.c	standard
+osfmk/ppc/chud/chud_glue.c		standard
+
 osfmk/kdp/ml/ppc/kdp_machdep.c        optional mach_kdp
 osfmk/kdp/ml/ppc/kdp_vm.c             optional mach_kdp
 osfmk/kdp/ml/ppc/kdp_misc.s           optional mach_kdp
 
-osfmk/ppc/serial_console.c		optional	scc device-driver
-osfmk/ppc/POWERMAC/serial_io.c	optional	scc device-driver
+osfmk/console/ppc/serial_console.c	optional	scc device-driver
+osfmk/ppc/serial_io.c			optional	scc device-driver
 
-osfmk/ppc/POWERMAC/video_console.c	optional	vc device-driver
-osfmk/ppc/POWERMAC/video_scroll.s	optional	vc device-driver
-
-osfmk/ppc/POWERMAC/dbdma.c		standard
+osfmk/console/panic_dialog.c	optional	vc device-driver
+osfmk/console/video_console.c	optional	vc device-driver
+osfmk/console/ppc/video_scroll.s	optional	vc device-driver
 
 # DUMMIES TO FORCE GENERATION OF .h FILES
 OPTIONS/hi_res_clock		optional hi_res_clock

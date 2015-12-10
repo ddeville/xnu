@@ -401,8 +401,8 @@ pmap_bootstrap(uint64_t msize, vm_offset_t *first_avail, unsigned int kmapsize)
 		
 	pmapTrans = (pmapTransTab *)addr;						/* Point to the pmap to hash translation table */
 		
-	pmapTrans[PPC_SID_KERNEL].pmapPAddr = (addr64_t)kernel_pmap;	/* Initialize the kernel pmap in the translate table */
-	pmapTrans[PPC_SID_KERNEL].pmapVAddr = kernel_pmap;		/* Initialize the kernel pmap in the translate table */
+	pmapTrans[PPC_SID_KERNEL].pmapPAddr = (addr64_t)((uintptr_t)kernel_pmap);	/* Initialize the kernel pmap in the translate table */
+	pmapTrans[PPC_SID_KERNEL].pmapVAddr = CAST_DOWN(unsigned int, kernel_pmap);  /* Initialize the kernel pmap in the translate table */
 		
 	addr += ((((1 << maxAdrSpb) * sizeof(pmapTransTab)) + 4095) & -4096);	/* Point past pmap translate table */
 
@@ -616,13 +616,12 @@ pmap_create(vm_size_t size)
 
 		simple_lock_init(&pmap->lock, ETAP_VM_PMAP);
 		
-		physpmap = ((addr64_t)pmap_find_phys(kernel_pmap, (addr64_t)pmap) << 12) | (addr64_t)((unsigned int)pmap & 0xFFF);	/* Get the physical address of the pmap */
+		physpmap = ((addr64_t)pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)pmap)) << 12) | (addr64_t)((unsigned int)pmap & 0xFFF);	/* Get the physical address of the pmap */
 		
-		pmap->pmapvr = (addr64_t)((unsigned int)pmap) ^ physpmap;	/* Make V to R translation mask */
+		pmap->pmapvr = (addr64_t)((uintptr_t)pmap) ^ physpmap;	/* Make V to R translation mask */
 		
 		pmapTrans[pmap->space].pmapPAddr = physpmap;	/* Set translate table physical to point to us */
-		pmapTrans[pmap->space].pmapVAddr = pmap;	/* Set translate table virtual to point to us */
-		
+		pmapTrans[pmap->space].pmapVAddr = CAST_DOWN(unsigned int, pmap);	/* Set translate table virtual to point to us */
 	}
 
 	pmap->pmapFlags = pmapKeyDef;					/* Set default key */
@@ -682,7 +681,7 @@ pmap_destroy(pmap_t pmap)
 	
 	if (free_pmap_count <= free_pmap_max) {		/* Do we have enough spares? */
 		
-		pmap->freepmap = (struct blokmap *)free_pmap_list;	/* Queue in front */
+		pmap->freepmap = free_pmap_list;		/* Queue in front */
 		free_pmap_list = pmap;
 		free_pmap_count++;
 		simple_unlock(&free_pmap_lock);
@@ -1579,7 +1578,7 @@ kern_return_t pmap_unnest(pmap_t grand, addr64_t vaddr) {
 			if(i == mycpu) continue;					/* Don't diddle ourselves */
 		
 			tstamp = per_proc_info[i].ruptStamp[1];		/* Save the processor's last interrupt time stamp */
-			if(cpu_signal(i, SIGPwake, 0, 0) != KERN_SUCCESS) {	/* Make sure we see the pmap change */
+			if(cpu_signal(i, SIGPcpureq, CPRQsegload, 0) != KERN_SUCCESS) {	/* Make sure we see the pmap change */
 				continue;
 			}
 			

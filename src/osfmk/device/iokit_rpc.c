@@ -480,6 +480,5 @@ kern_return_t IOUnmapPages(vm_map_t map, vm_offset_t va, vm_size_t length)
 void IOGetTime( mach_timespec_t * clock_time);
 void IOGetTime( mach_timespec_t * clock_time)
 {
-	*clock_time = clock_get_system_value();
+	clock_get_system_nanotime(&clock_time->tv_sec, &clock_time->tv_nsec);
 }
-

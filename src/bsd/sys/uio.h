@@ -74,10 +74,11 @@ enum	uio_rw { UIO_READ, UIO_WRITE };
 
 /* Segment flag values. */
 enum uio_seg {
-	UIO_USERSPACE,		/* from user data space */
-	UIO_USERISPACE,		/* from user I space */
-	UIO_SYSSPACE,		/* from system space */
-	UIO_PHYS_USERSPACE      /* kernel address is physical, to/from user data space */
+	UIO_USERSPACE,		/* kernel address is virtual,  to/from user virtual */
+	UIO_USERISPACE,		/* kernel address is virtual,  to/from user virtual */
+	UIO_SYSSPACE,		/* kernel address is virtual,  to/from system virtual */
+	UIO_PHYS_USERSPACE,     /* kernel address is physical, to/from user virtual */
+	UIO_PHYS_SYSSPACE,      /* kernel address is physical, to/from system virtual */
 };
 
 #ifdef KERNEL

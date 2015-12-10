@@ -249,6 +249,6 @@ typedef struct ppc_exception_state64 {
 /*
  * Largest state on this machine:
  */
-#define THREAD_MACHINE_STATE_MAX	PPC_VECTOR_STATE_COUNT
+#define THREAD_MACHINE_STATE_MAX	THREAD_STATE_MAX
 
 #endif /* _MACH_PPC_THREAD_STATUS_H_ */

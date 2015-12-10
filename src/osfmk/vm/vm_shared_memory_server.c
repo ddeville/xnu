@@ -35,6 +35,7 @@
 #include <kern/zalloc.h>
 #include <mach/kern_return.h>
 #include <mach/vm_inherit.h>
+#include <machine/cpu_capabilities.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_map.h>
 #include <vm/vm_page.h>
@@ -119,10 +120,10 @@ int		shared_file_available_hash_ele;
 /* com region support */
 ipc_port_t		com_region_handle = NULL;
 vm_map_t		com_region_map = NULL;
-vm_size_t		com_region_size = 0x7000;
+vm_size_t		com_region_size = _COMM_PAGE_AREA_LENGTH;
 shared_region_mapping_t	com_mapping_resource = NULL;
 
-#define		GLOBAL_COM_REGION_BASE 0xFFFF8000
+#define		GLOBAL_COM_REGION_BASE _COMM_PAGE_BASE_ADDRESS
 
 /* called for the non-default, private branch shared region support */
 /* system default fields for fs_base and system supported are not   */
@@ -250,9 +251,10 @@ lookup_default_shared_region(
  * Drop a reference on removal.
  */
 
-void
-remove_default_shared_region(
-		shared_region_mapping_t system_region)
+__private_extern__ void
+remove_default_shared_region_lock(
+		shared_region_mapping_t system_region,
+		int need_lock)
 {
 	shared_region_mapping_t old_system_region;
 	unsigned int fs_base;
@@ -270,7 +272,8 @@ remove_default_shared_region(
 		default_environment_shared_regions 
 			= old_system_region->default_env_list;
 		old_system_region->flags |= SHARED_REGION_STALE;
-               	shared_region_mapping_dealloc(old_system_region);
+               	shared_region_mapping_dealloc_lock(old_system_region,
+								need_lock);
 		default_regions_list_unlock();
 		return;
 	}
@@ -282,13 +285,26 @@ remove_default_shared_region(
 			old_system_region->default_env_list = 
 				old_system_region->default_env_list->default_env_list;
 			dead_region->flags |= SHARED_REGION_STALE;
-               		shared_region_mapping_dealloc(dead_region);
+               		shared_region_mapping_dealloc_lock(dead_region,
+								need_lock);
 			default_regions_list_unlock();
 			return;
 		}
 		old_system_region = old_system_region->default_env_list;
 	}
 	default_regions_list_unlock();
+}
+
+/*
+ * Symbol compatability; we believe shared_region_mapping_dealloc_lock() is
+ * the only caller.  Remove this stub function and the corresponding symbol
+ * export for Merlot.
+ */
+void
+remove_default_shared_region(
+		shared_region_mapping_t system_region)
+{
+	remove_default_shared_region_lock(system_region, 1);
 }
 
 void
@@ -695,12 +711,13 @@ copyin_shared_file(
 				/* and put back our original set */
 				vm_get_shared_region(current_task(), 
 						&new_system_shared_regions);
-                		shared_region_mapping_dealloc(
-						new_system_shared_regions);
+                		shared_region_mapping_dealloc_lock(
+						new_system_shared_regions, 0);
 				vm_set_shared_region(current_task(), regions);
 			}
 			if(system_region != NULL) {
-                		shared_region_mapping_dealloc(system_region);
+                		shared_region_mapping_dealloc_lock(
+							system_region, 0);
 			}
 		}
 		mutex_unlock(&shared_file_header->lock);
@@ -765,10 +782,11 @@ lsf_hash_lookup(
 	return (load_struct_t *)0;
 }
 
-load_struct_t *
-lsf_remove_regions_mappings(
+__private_extern__ load_struct_t *
+lsf_remove_regions_mappings_lock(
 	shared_region_mapping_t	region,
-	shared_region_task_mappings_t	sm_info)
+	shared_region_task_mappings_t	sm_info,
+	int need_lock)
 {
 	int			i;
 	register queue_t	bucket;
@@ -779,9 +797,11 @@ lsf_remove_regions_mappings(
 
 	shared_file_header = (shared_file_info_t *)sm_info->region_mappings;
 
-	mutex_lock(&shared_file_header->lock);
+	if (need_lock)
+		mutex_lock(&shared_file_header->lock);
 	if(shared_file_header->hash_init == FALSE) {
-		mutex_unlock(&shared_file_header->lock);
+		if (need_lock)
+			mutex_unlock(&shared_file_header->lock);
 		return NULL;
 	}
 	for(i = 0;  i<shared_file_header->hash_size; i++) {
@@ -796,7 +816,21 @@ lsf_remove_regions_mappings(
 		   entry = next_entry;
 		}
 	}
-	mutex_unlock(&shared_file_header->lock);
+	if (need_lock)
+		mutex_unlock(&shared_file_header->lock);
+}
+
+/*
+ * Symbol compatability; we believe shared_region_mapping_dealloc() is the
+ * only caller.  Remove this stub function and the corresponding symbol
+ * export for Merlot.
+ */
+load_struct_t *
+lsf_remove_regions_mappings(
+	shared_region_mapping_t	region,
+	shared_region_task_mappings_t	sm_info)
+{
+	return lsf_remove_regions_mappings_lock(region, sm_info, 1);
 }
 
 /* Removes a map_list, (list of loaded extents) for a file from     */
@@ -914,6 +948,9 @@ lsf_load(
 		}
 		if((alternate_load_next + round_page_32(max_loadfile_offset)) >=
 			(sm_info->data_size - (sm_info->data_size>>9))) {
+			entry->base_address = 
+				(*base_address) & SHARED_TEXT_REGION_MASK;
+			lsf_unload(file_object, entry->base_address, sm_info);
 
 			return KERN_NO_SPACE;
 		}
@@ -959,6 +996,7 @@ lsf_load(
                 // shared alternate space.  If they want it loaded, they can put
                 // it in the alternate space explicitly.
 printf("Library trying to load across alternate shared region boundary -- denied!\n");
+		lsf_unload(file_object, entry->base_address, sm_info);
                 return KERN_INVALID_ARGUMENT;
               }
             } else {
@@ -968,6 +1006,7 @@ printf("Library trying to load across alternate shared region boundary -- denied
               region_end = (mappings[i].size + region_start);
               if (region_end >= SHARED_ALTERNATE_LOAD_BASE) {
 printf("Library trying to load across alternate shared region boundary-- denied!\n");
+	       lsf_unload(file_object, entry->base_address, sm_info);
                return KERN_INVALID_ARGUMENT;
               }
             } // write?

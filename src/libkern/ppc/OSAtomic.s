@@ -44,9 +44,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 .macro ENTRY
-	.text
-	.align		2
-	.globl		$0
+    .text
+    .align	2
+    .globl	$0
 $0:
 .endmacro
 
@@ -54,60 +54,41 @@ $0:
 
 /*
 int OSCompareAndSwap( UInt32 oldVal, UInt32 newVal, UInt32 * addr )
+This is now an alias to hw_compare_and_store, see xnu/libkern/Makefile
 */
 
-
-	ENTRY	_OSCompareAndSwap
-.L_CASretry:
-		lwz		r6,0(r5)		// Get the swap value
-		cmpw	r6,r3			// Is is the same
-		bne--	.L_CASfail2		// No...
-		
-.L_CASretry2:
-		lwarx	r6,0,r5			// Get it atomically now
-		cmpw	r6,r3			// Same?
-		bne--	.L_CASfail		// Nope, go say so and toss reservations...
-		stwcx.	r4,0,r5			// Stash the new value
-		bne--	.L_CASretry2	// Just got collision...
-		isync
-		li	r3,	1
-		blr
-
-.L_CASfail:
-		li		a7,-4			// Point to a spot in the red zone
-		stwcx.	a7,a7,r1		// Kill reservation
-		
-.L_CASfail2:	
-		li	r3,	0
-		blr
-
-
+/*
+Note:  We can not use the hw_atomic routines provided by osfmk/ppc as
+the return the result of the addition not the original value.
+*/
 /*
 SInt32	OSDecrementAtomic(SInt32 * value)
 */
-	ENTRY	_OSDecrementAtomic
-	mr	r4, r3
-	li	r3, -1
-	b	_OSAddAtomic
+    ENTRY	_OSDecrementAtomic
+    mr		r4, r3
+    li		r3, -1
+    b		_OSAddAtomic
 
 /*
 SInt32	OSIncrementAtomic(SInt32 * value)
 */
 
-	ENTRY	_OSIncrementAtomic
-	mr	r4, r3
-	li	r3, 1
+    .align	5
+
+    ENTRY	_OSIncrementAtomic
+    mr		r4, r3
+    li		r3, 1
 
 /*
 SInt32	OSAddAtomic(SInt32 amount, SInt32 * value)
 */
 
-	ENTRY	_OSAddAtomic
+    ENTRY	_OSAddAtomic
 
-	mr	r5,r3				/* Save the increment */
+    mr		r5,r3		/* Save the increment */
 .L_AAretry:
-	lwarx	r3, 0, r4			/* Grab the area value */
-	add	r6, r3, r5			/* Add the value */
-	stwcx.	r6, 0, r4			/* Try to save the new value */
-	bne-	.L_AAretry			/* Didn't get it, try again... */
-	blr					/* Return the original value */
+    lwarx	r3, 0, r4	/* Grab the area value */
+    add		r6, r3, r5	/* Add the value */
+    stwcx.	r6, 0, r4	/* Try to save the new value */
+    bne-	.L_AAretry	/* Didn't get it, try again... */
+    blr				/* Return the original value */

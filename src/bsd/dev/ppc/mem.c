@@ -161,7 +161,7 @@ mmrw(dev, uio, rw)
 			}
 			o = uio->uio_offset - vll;
 			c = min(PAGE_SIZE - o, (u_int)iov->iov_len);
-			error = uiomove((where + o), c, uio);
+			error = uiomove((caddr_t)(where + o), c, uio);
 
 			if(dgWork.dgFlags & enaDiagDM) (void)mapping_remove(kernel_pmap, (addr64_t)where);	/* Unmap it */
 			kmem_free(kernel_map, where, PAGE_SIZE);

@@ -473,7 +473,6 @@ dp_memory_object_deallocate(
 {
 	vstruct_t		vs;
 	mach_port_seqno_t	seqno;
-	ipc_port_t 		trigger;
 
 	/*
 	 * Because we don't give out multiple first references
@@ -555,22 +554,6 @@ dp_memory_object_deallocate(
 		thread_wakeup((event_t)&backing_store_release_trigger_disable);
 	}
 	VSL_UNLOCK();
-
-	PSL_LOCK();
-	if(max_pages_trigger_port
-		&& (backing_store_release_trigger_disable == 0)
-		&& (dp_pages_free > maximum_pages_free)) {
-		trigger = max_pages_trigger_port;
-		max_pages_trigger_port = NULL;
-	} else 
-		trigger = IP_NULL;
-	PSL_UNLOCK();
-
-	if (trigger != IP_NULL) {
-		default_pager_space_alert(trigger, LO_WAT_ALERT);
-		ipc_port_release_send(trigger);
-	}
-
 }
 
 kern_return_t

@@ -132,6 +132,7 @@ static __inline__ int _NumCPUs( void ) { return (_cpu_capabilities & kNumCPUs) >
 #define _COMM_PAGE_UNUSED3				(_COMM_PAGE_BASE_ADDRESS+0x080)	// 384 unused bytes
  
  /* jump table (bla to this address, which may be a branch to the actual code somewhere else) */
+ /* When new jump table entries are added, corresponding symbols should be added below         */
  
 #define _COMM_PAGE_ABSOLUTE_TIME		(_COMM_PAGE_BASE_ADDRESS+0x200)	// mach_absolute_time()
 #define _COMM_PAGE_SPINLOCK_TRY			(_COMM_PAGE_BASE_ADDRESS+0x220)	// spinlock_try()
@@ -155,6 +156,40 @@ static __inline__ int _NumCPUs( void ) { return (_cpu_capabilities & kNumCPUs) >
 #define	_COMM_PAGE_UNUSED6				(_COMM_PAGE_BASE_ADDRESS+0xF80)	// 128 unused bytes
 
 #define	_COMM_PAGE_BIGCOPY				(_COMM_PAGE_BASE_ADDRESS+0x1000)// very-long-operand copies
+
+#define _COMM_PAGE_END					(_COMM_PAGE_BASE_ADDRESS+0x1600)// end of common page
+
+#ifdef __ASSEMBLER__
+#ifdef __COMM_PAGE_SYMBOLS
+
+#define CREATE_COMM_PAGE_SYMBOL(symbol_name, symbol_address)		\
+				.org	(symbol_address - _COMM_PAGE_BASE_ADDRESS) @\
+symbol_name: nop
+
+	.text		// Required to make a well behaved symbol file
+
+	CREATE_COMM_PAGE_SYMBOL(___mach_absolute_time, _COMM_PAGE_ABSOLUTE_TIME)
+	CREATE_COMM_PAGE_SYMBOL(___spin_lock_try, _COMM_PAGE_SPINLOCK_TRY)
+	CREATE_COMM_PAGE_SYMBOL(___spin_lock, _COMM_PAGE_SPINLOCK_LOCK)
+	CREATE_COMM_PAGE_SYMBOL(___spin_unlock, _COMM_PAGE_SPINLOCK_UNLOCK)
+	CREATE_COMM_PAGE_SYMBOL(___pthread_getspecific, _COMM_PAGE_PTHREAD_GETSPECIFIC)
+	CREATE_COMM_PAGE_SYMBOL(___gettimeofday, _COMM_PAGE_GETTIMEOFDAY)
+	CREATE_COMM_PAGE_SYMBOL(___sys_dcache_flush, _COMM_PAGE_FLUSH_DCACHE)
+	CREATE_COMM_PAGE_SYMBOL(___sys_icache_invalidate, _COMM_PAGE_FLUSH_ICACHE)
+	CREATE_COMM_PAGE_SYMBOL(___pthread_self, _COMM_PAGE_PTHREAD_SELF)
+	CREATE_COMM_PAGE_SYMBOL(___spin_lock_relinquish, _COMM_PAGE_RELINQUISH)
+	CREATE_COMM_PAGE_SYMBOL(___bzero, _COMM_PAGE_BZERO)
+	CREATE_COMM_PAGE_SYMBOL(___bcopy, _COMM_PAGE_BCOPY)
+	CREATE_COMM_PAGE_SYMBOL(___memcpy, _COMM_PAGE_MEMCPY)
+//	CREATE_COMM_PAGE_SYMBOL(___memmove, _COMM_PAGE_MEMMOVE)
+	CREATE_COMM_PAGE_SYMBOL(___bigcopy, _COMM_PAGE_BIGCOPY)
+	CREATE_COMM_PAGE_SYMBOL(___end_comm_page, _COMM_PAGE_END)
+
+	.data		// Required to make a well behaved symbol file
+	.long	0	// Required to make a well behaved symbol file
+
+#endif /* __COMM_PAGE_SYMBOLS */
+#endif /* __ASSEMBLER__ */
 
 #endif /* __APPLE_API_PRIVATE */
 #endif /* _PPC_CPU_CAPABILITIES_H */

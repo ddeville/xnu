@@ -43,6 +43,7 @@
 #include <kern/thread_act.h>
 #include <mach/vm_attributes.h>
 #include <mach/vm_param.h>
+#include <vm/vm_fault.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_map.h>
 #include <vm/vm_page.h>
@@ -62,7 +63,7 @@
 #include <ppc/mappings.h>
 #include <ddb/db_output.h>
 
-#include <ppc/POWERMAC/video_console.h>		/* (TEST/DEBUG) */
+#include <console/video_console.h>		/* (TEST/DEBUG) */
 
 #define PERFTIMES 0
 
@@ -397,7 +398,7 @@ mapping *mapping_find(pmap_t pmap, addr64_t va, addr64_t *nextva, int full) {	/*
 		}
 		
 		curva = curva + mp->mpNestReloc;						/* Relocate va to new pmap */
-		curpmap = pmapTrans[mp->mpSpace].pmapVAddr;				/* Get the address of the nested pmap */
+		curpmap = (pmap_t) pmapTrans[mp->mpSpace].pmapVAddr;	/* Get the address of the nested pmap */
 		mapping_drop_busy(mp);									/* We have everything we need from the mapping */
 		
 	}
@@ -650,7 +651,7 @@ static thread_call_data_t	mapping_adjust_call_data;
 
 void mapping_adjust(void) {										/* Adjust free mappings */
 
-	kern_return_t	retr;
+	kern_return_t	retr = KERN_SUCCESS;
 	mappingblok	*mb, *mbn;
 	spl_t			s;
 	int				allocsize, i;
@@ -1366,7 +1367,7 @@ addr64_t	mapping_p2v(pmap_t pmap, ppnum_t pa) {				/* Finds first virtual mappin
 
 	s = splhigh();											/* Make sure interruptions are disabled */
 
-	mp = hw_find_space(physent, pmap->space);				/* Go find the first mapping to the page from the requested pmap */
+	mp = (mapping *) hw_find_space(physent, pmap->space);	/* Go find the first mapping to the page from the requested pmap */
 
 	if(mp) {												/* Did we find one? */
 		va = mp->mpVAddr & -4096;							/* If so, get the cleaned up vaddr */
@@ -1460,6 +1461,9 @@ kern_return_t copypv(addr64_t source, addr64_t sink, unsigned int size, int whic
 	unsigned int pindex;
 	phys_entry *physent;
 	vm_prot_t prot;
+	int orig_which;
+
+	orig_which = which;
 
 	map = (which & cppvKmap) ? kernel_map : current_map_fast();
 
@@ -1497,7 +1501,7 @@ kern_return_t copypv(addr64_t source, addr64_t sink, unsigned int size, int whic
 						panic("copypv: No vaild mapping on memory %s %x", "RD", vaddr);
 
 					splx(s);						/* Restore the interrupt level */
-					ret = vm_fault(map, trunc_page_32((vm_offset_t)vaddr), prot, FALSE, NULL, 0);	/* Didn't find it, try to fault it in... */
+					ret = vm_fault(map, trunc_page_32((vm_offset_t)vaddr), prot, FALSE, FALSE, NULL, 0);	/* Didn't find it, try to fault it in... */
 				
 					if(ret != KERN_SUCCESS)return KERN_FAILURE;	/* Didn't find any, return no good... */
 					
@@ -1505,7 +1509,14 @@ kern_return_t copypv(addr64_t source, addr64_t sink, unsigned int size, int whic
 					continue;						/* Go try for the map again... */
 	
 				}
-		
+				if (mp->mpVAddr & mpI) {                 /* cache inhibited, so force the appropriate page to be flushed before */
+				        if (which & cppvPsrc)            /* and after the copy to avoid cache paradoxes */
+					        which |= cppvFsnk;
+					else
+					        which |= cppvFsrc;
+				} else
+				        which = orig_which;
+
 				/* Note that we have to have the destination writable.  So, if we already have it, or we are mapping the source,
 					we can just leave.
 				*/		
@@ -1516,7 +1527,7 @@ kern_return_t copypv(addr64_t source, addr64_t sink, unsigned int size, int whic
 					panic("copypv: No vaild mapping on memory %s %x", "RDWR", vaddr);
 				splx(s);							/* Restore the interrupt level */
 				
-				ret = vm_fault(map, trunc_page_32((vm_offset_t)vaddr), VM_PROT_READ | VM_PROT_WRITE, FALSE, NULL, 0);	/* check for a COW area */
+				ret = vm_fault(map, trunc_page_32((vm_offset_t)vaddr), VM_PROT_READ | VM_PROT_WRITE, FALSE, FALSE, NULL, 0);	/* check for a COW area */
 				if (ret != KERN_SUCCESS) return KERN_FAILURE;	/* We couldn't get it R/W, leave in disgrace... */
 				s = splhigh();						/* Don't bother me */
 			}
@@ -1583,7 +1594,7 @@ void mapping_verify(void) {
 
 	mbn = 0;												/* Start with none */
 	for(mb = mapCtl.mapcnext; mb; mb = mb->nextblok) {		/* Walk the free chain */
-		if((mb->mapblokflags & 0x7FFFFFFF) != mb) {			/* Is tag ok? */
+		if((mappingblok *)(mb->mapblokflags & 0x7FFFFFFF) != mb) {	/* Is tag ok? */
 			panic("mapping_verify: flags tag bad, free chain; mb = %08X, tag = %08X\n", mb, mb->mapblokflags);
 		}
 		mbn = mb;											/* Remember the last one */

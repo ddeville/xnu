@@ -26,7 +26,7 @@
 #include <mach/kmod.h>
 #include <libkern/c++/OSDictionary.h>
 
-#include <libsa/kmod.h>
+#include <libsa/kext.h>
 #include <libsa/catalogue.h>
 #include <libsa/malloc.h>
 

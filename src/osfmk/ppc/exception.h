@@ -287,8 +287,7 @@ struct per_proc_info {
 
 	/* PPC cache line boundary here - 020 */
 
-	unsigned int	active_kloaded;		/* pointer to active_kloaded[CPU_NO] */
-	unsigned int	active_stacks;		/* pointer to active_stacks[CPU_NO] */
+	unsigned int	rsrvd020[2];
 	unsigned int	need_ast;			/* pointer to need_ast[CPU_NO] */
 /*
  *	Note: the following two pairs of words need to stay in order and each pair must
@@ -298,7 +297,7 @@ struct per_proc_info {
 	unsigned int 	liveVRSave;			/* VRSave assiciated with live vector registers */
 	struct facility_context	*VMX_owner;	/* Owner of the VMX on this cpu */
 	unsigned int 	holdQFret;			/* Hold off releasing quickfret list */
-	unsigned int	rsrvd03C[1];
+	unsigned int 	save_exception_type;
 
 	/* PPC cache line boundary here - 040 */
 	addr64_t		quickfret;			/* List of saveareas to release */
@@ -334,8 +333,10 @@ struct per_proc_info {
 #define SIGPdebug	2					/* Requests a debugger entry */
 #define SIGPwake	3					/* Wake up a sleeping processor */
 #define CPRQtemp	0					/* Get temprature of processor */
-#define CPRQtimebase	1				/* Get timebase of processor */
-#define CPRQscom	2					/* SCOM */
+#define CPRQtimebase	1					/* Get timebase of processor */
+#define CPRQsegload	2					/* Segment registers reload */
+#define CPRQscom	3					/* SCOM */
+#define CPRQchud	4					/* CHUD perfmon */
 	unsigned int	MPsigpParm0;		/* SIGP parm 0 */
 	unsigned int	MPsigpParm1;		/* SIGP parm 1 */
 	unsigned int	MPsigpParm2;		/* SIGP parm 2 */
@@ -354,7 +355,7 @@ struct per_proc_info {
 	
 	/* PPC cache line boundary here - 160 */
 	time_base_enable_t	time_base_enable;
-	unsigned int	ppRsvd164[3];		/* Reserved */
+	unsigned int	ppRsvd164[4];		/* Reserved */
 	cpu_data_t		pp_cpu_data;		/* cpu data info */
 	
 	/* PPC cache line boundary here - 180 */
@@ -517,7 +518,6 @@ struct per_proc_info {
 
 };
 
-#define	pp_active_thread	pp_cpu_data.active_thread
 #define	pp_preemption_count	pp_cpu_data.preemption_level
 #define	pp_simple_lock_count	pp_cpu_data.simple_lock_count
 #define	pp_interrupt_level	pp_cpu_data.interrupt_level
@@ -538,8 +538,11 @@ extern char *trap_type[];
 #define turnEEon	0x2000
 #define traceBE     0x1000					/* user mode BE tracing in enabled */
 #define traceBEb    3						/* bit number for traceBE */
-#define BootDone	0x0100
+#define SleepState	0x0800
+#define SleepStateb	4
+#define mcountOff	0x0400
 #define SignalReady	0x0200
+#define BootDone	0x0100
 #define loadMSR		0x7FF4
 
 #define T_VECTOR_SIZE	4					/* function pointer size */

@@ -43,7 +43,7 @@ kmem_mb_alloc(vm_map_t  mbmap, int size)
 	if (kernel_memory_allocate(mbmap, &addr, size,
    		0,
 		KMA_NOPAGEWAIT|KMA_KOBJECT) == KERN_SUCCESS)
-                                return((void *)addr);
+   			return(addr);
 	else
 		return(0);
 		
@@ -101,6 +101,9 @@ bdevsw_isfree(int index)
 			    sizeof(struct bdevsw)) == 0)
 		    break;
 	    }
+	} else {
+		/* NB: Not used below unless index is in range */
+		devsw = &bdevsw[index];
 	}
 
 	if ((index < 0) || (index >= nblkdev) ||

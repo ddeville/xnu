@@ -661,7 +661,7 @@ void db_display_save(db_expr_t addr, int have_addr, db_expr_t count, char * modi
 	for(task = (task_t)pset->tasks.next; task != (task_t)&pset->tasks.next; task = (task_t)task->pset_tasks.next) {	/* Go through the tasks */
 		taskact = 0;								/* Reset activation count */
 		db_printf("\nTask %4d @%08X:\n", tottasks, task);	/* Show where we're at */
-		for(act = (thread_act_t)task->thr_acts.next; act != (thread_act_t)&task->thr_acts; act = (thread_act_t)act->thr_acts.next) {	/* Go through activations */
+		for(act = (thread_act_t)task->threads.next; act != (thread_act_t)&task->threads; act = (thread_act_t)act->task_threads.next) {	/* Go through activations */
 			db_printf("   Act %4d @%08X - p: %08X  current context: %08X\n",
 					  taskact, act, act->mact.pcb, act->mact.curctx);					
 					

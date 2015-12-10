@@ -137,7 +137,7 @@ tws_hash_create(
 	if((tws->table_ele[0] = (tws_hash_ptr_t)
 			kalloc(sizeof(struct tws_hash_ptr) * lines * rows)) 
 								== NULL) {
-		kfree((vm_offset_t)tws->table[0], sizeof(tws_hash_ele_t) 
+		kfree((vm_offset_t)tws->table[0], sizeof(tws_hash_ptr_t) 
 				* lines * rows);
 		kfree((vm_offset_t)tws, sizeof(struct tws_hash));
 		return (tws_hash_t)NULL;
@@ -577,14 +577,6 @@ printf("cache_lookup, result = 0x%x, addr = 0x%x, object 0x%x, offset 0x%x%x\n",
 			ask_for_startup_cache_release = 1;
 		}
 	}
-	if((tws->startup_name != NULL) && (tws->mod == 0)) {
-			/* Ensure as good a working set as possible */
-			pmap_remove(map->pmap, 0, GLOBAL_SHARED_TEXT_SEGMENT);
-			pmap_remove(map->pmap, 
-				GLOBAL_SHARED_DATA_SEGMENT 
-				+ SHARED_DATA_REGION_SIZE, 0xFFFFFFFFFFFFF000);
-	}
-
 	/* This next bit of code, the and alternate hash */
 	/* are all made necessary because of IPC COW     */
 
@@ -767,6 +759,10 @@ printf("cache_lookup, result = 0x%x, addr = 0x%x, object 0x%x, offset 0x%x%x\n",
 					tws_unlock(tws);
 					return KERN_NO_SPACE;
 				      }
+				      /* object persistence is guaranteed by */
+				      /* an elevated paging or object        */
+				      /* reference count in the caller. */
+				      vm_object_unlock(object);
 				      if((tws->table[set] = (tws_hash_ptr_t *)
 				         kalloc(sizeof(tws_hash_ptr_t) 
 						* tws->number_of_lines 
@@ -790,12 +786,12 @@ printf("cache_lookup, result = 0x%x, addr = 0x%x, object 0x%x, offset 0x%x%x\n",
 						* tws->number_of_lines 
 						* tws->number_of_elements)) 
 								== NULL) {
-				        kfree((vm_offset_t)tws->table_ele[set], 
-						sizeof(tws_hash_ptr_t) 
+				         kfree((vm_offset_t)tws->table_ele[set], 
+						sizeof(struct tws_hash_ptr) 
 				       		* tws->number_of_lines 
 						* tws->number_of_elements);
 				         kfree((vm_offset_t)tws->table[set], 
-						sizeof(struct tws_hash_ptr) 
+						sizeof(tws_hash_ptr_t) 
 				       		* tws->number_of_lines 
 						* tws->number_of_elements);
 				         tws->table[set] = NULL;
@@ -807,16 +803,16 @@ printf("cache_lookup, result = 0x%x, addr = 0x%x, object 0x%x, offset 0x%x%x\n",
 						(struct tws_hash_line) 
 						* tws->number_of_lines)) 
 								== NULL) {
-				         kfree((vm_offset_t)tws->table[set], 
-						sizeof(tws_hash_ptr_t) 
+				         kfree((vm_offset_t)tws->alt_ele[set], 
+						sizeof(struct tws_hash_ptr) 
 			               		* tws->number_of_lines 
 						* tws->number_of_elements);
-				        kfree((vm_offset_t)tws->table_ele[set], 
+					 kfree((vm_offset_t)tws->table_ele[set], 
 						sizeof(struct tws_hash_ptr) 
 				       		* tws->number_of_lines 
 						* tws->number_of_elements);
-				         kfree((vm_offset_t)tws->alt_ele[set], 
-						sizeof(struct tws_hash_ptr) 
+				         kfree((vm_offset_t)tws->table[set], 
+						sizeof(tws_hash_ptr_t) 
 			               		* tws->number_of_lines 
 						* tws->number_of_elements);
 				         tws->table[set] = NULL;
@@ -843,6 +839,7 @@ printf("cache_lookup, result = 0x%x, addr = 0x%x, object 0x%x, offset 0x%x%x\n",
 						sizeof(struct tws_hash_line) 
 						* tws->number_of_lines);
 				      }
+				      vm_object_lock(object);
 				   } else {
 				      int age_of_cache;
 				      age_of_cache = 
@@ -1189,10 +1186,10 @@ tws_build_cluster(
 		} 
 
 		if (vm_page_lookup(object, after) != VM_PAGE_NULL) {
-			/* we can bridge resident pages */
-			after += PAGE_SIZE_64;
-			length += PAGE_SIZE;
-			continue;
+			/*
+			 * don't bridge resident pages
+			 */
+		        break;
 		}
 
 		if (object->internal) {
@@ -1250,10 +1247,10 @@ tws_build_cluster(
 		}
 
 		if (vm_page_lookup(object, before) != VM_PAGE_NULL) {
-			/* we can bridge resident pages */
-			*start -= PAGE_SIZE_64;
-			length += PAGE_SIZE;
-			continue;
+			/*
+			 * don't bridge resident pages
+			 */
+		        break;
 		}
 
 		if (object->internal) {
@@ -1709,13 +1706,11 @@ tws_handle_startup_file(
 				return KERN_SUCCESS;
 			}
 			*new_info = TRUE;
+
 			error = tws_write_startup_file(task, 
 					fid, mod, app_name, uid);
 			if(error)
 				return error;
-			/* use the mod in the write case as an init */
-			/* flag */
-			mod = 0;
 
 		} else {
 			error = tws_read_startup_file(task, 
@@ -1846,7 +1841,6 @@ tws_read_startup_file(
 		/* the allocation size and file size should be the same */
 		/* just in case their not, make sure we dealloc correctly  */
 		startup->tws_hash_size = cache_size;
-
 
 		tws->startup_cache = startup;
 		tws_unlock(tws);

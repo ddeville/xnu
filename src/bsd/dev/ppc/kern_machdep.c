@@ -57,6 +57,9 @@ check_cpu_subtype(cpu_subtype_t cpu_subtype)
 
 	switch (cpu_subtype) {
 		case CPU_SUBTYPE_POWERPC_970:
+				/* Do not allow a 970 binary to run on non-970 systems */
+				if (ms->cpu_subtype != CPU_SUBTYPE_POWERPC_970)
+				break;
 		case CPU_SUBTYPE_POWERPC_7450:
 		case CPU_SUBTYPE_POWERPC_7400:
 		case CPU_SUBTYPE_POWERPC_750:
@@ -86,7 +89,7 @@ grade_cpu_subtype(cpu_subtype_t cpu_subtype)
 	 * cctools project.  As of 2/16/98 this is what has been agreed upon for
 	 * the PowerPC subtypes.  If an exact match is not found the subtype will
 	 * be picked from the following order:
-	 *		970, 7450, 7400, 750, ALL
+	 *		970(but only on 970), 7450, 7400, 750, ALL
 	 * Note the 601 is NOT in the list above.  It is only picked via an exact
 	 * match. For details see Radar 2213821.
 	 *
@@ -99,6 +102,9 @@ grade_cpu_subtype(cpu_subtype_t cpu_subtype)
 		return 6;
 	switch (cpu_subtype) {
 		case CPU_SUBTYPE_POWERPC_970:
+				/* Do not allow a 970 binary to run on non-970 systems */		
+				if (ms->cpu_subtype != CPU_SUBTYPE_POWERPC_970)
+					break;
 			return 5;
 		case CPU_SUBTYPE_POWERPC_7450:
 			return 4;

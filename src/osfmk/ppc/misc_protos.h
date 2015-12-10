@@ -90,9 +90,10 @@ extern void phys_copy(addr64_t, addr64_t, vm_size_t);
 
 extern void Load_context(thread_t th);
 
-extern struct thread_shuttle *Switch_context(struct thread_shuttle   *old,
-				      void                    (*cont)(void),
-				      struct thread_shuttle   *new);
+extern thread_t Switch_context(
+					thread_t	old,
+					void		(*cont)(void),
+					thread_t	new);
 
 extern void fpu_save(struct facility_context *);
 extern void vec_save(struct facility_context *);

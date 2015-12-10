@@ -490,3 +490,4 @@ commpage_populate( void )
     sync_cache_virtual((vm_offset_t) commPagePtr,_COMM_PAGE_AREA_USED);	// make all that new code executable
 
 }
+

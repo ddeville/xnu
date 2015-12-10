@@ -36,6 +36,7 @@
 #include <IOKit/IORangeAllocator.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/pwr_mgt/RootDomain.h>
+#include <IOKit/IOKitKeys.h>
 
 #include <IOKit/system.h>
 
@@ -58,7 +59,7 @@ OSDefineMetaClassAndStructors(IOPlatformExpert, IOService)
 
 OSMetaClassDefineReservedUsed(IOPlatformExpert,  0);
 
-OSMetaClassDefineReservedUnused(IOPlatformExpert,  1);
+OSMetaClassDefineReservedUsed(IOPlatformExpert,  1);
 OSMetaClassDefineReservedUnused(IOPlatformExpert,  2);
 OSMetaClassDefineReservedUnused(IOPlatformExpert,  3);
 OSMetaClassDefineReservedUnused(IOPlatformExpert,  4);
@@ -132,6 +133,16 @@ bool IOPlatformExpert::start( IOService * provider )
     
     PMInstantiatePowerDomains();
     
+    // Parse the serial-number data and publish a user-readable string
+    OSData* mydata = (OSData*) (provider->getProperty("serial-number"));
+    if (mydata != NULL) {
+        OSString *serNoString = createSystemSerialNumberString(mydata);
+        if (serNoString != NULL) {
+            provider->setProperty(kIOPlatformSerialNumberKey, serNoString);
+            serNoString->release();
+        }
+    }
+    
     return( configure(provider) );
 }
 
@@ -175,7 +186,7 @@ IOService * IOPlatformExpert::createNub( OSDictionary * from )
 }
 
 bool IOPlatformExpert::compareNubName( const IOService * nub,
-				OSString * name, OSString ** matched) const
+				OSString * name, OSString ** matched ) const
 {
     return( nub->IORegistryEntry::compareName( name, matched ));
 }
@@ -223,6 +234,11 @@ bool IOPlatformExpert::getMachineName( char * /*name*/, int /*maxLength*/)
 bool IOPlatformExpert::getModelName( char * /*name*/, int /*maxLength*/)
 {
     return( false );
+}
+
+OSString* IOPlatformExpert::createSystemSerialNumberString(OSData* myProperty)
+{
+    return NULL;
 }
 
 IORangeAllocator * IOPlatformExpert::getPhysicalRangeAllocator(void)
@@ -1069,6 +1085,39 @@ IOByteCount IODTPlatformExpert::savePanicInfo(UInt8 *buffer, IOByteCount length)
   return lengthSaved;
 }
 
+OSString* IODTPlatformExpert::createSystemSerialNumberString(OSData* myProperty) {
+    UInt8* serialNumber;
+    unsigned int serialNumberSize;
+    short pos = 0;
+    char* temp;
+    char SerialNo[30];
+    
+    if (myProperty != NULL) {
+        serialNumberSize = myProperty->getLength();
+        serialNumber = (UInt8*)(myProperty->getBytesNoCopy());
+        temp = serialNumber;
+        if (serialNumberSize > 0) {
+            // check to see if this is a CTO serial number...
+            while (pos < serialNumberSize && temp[pos] != '-') pos++;
+            
+            if (pos < serialNumberSize) { // there was a hyphen, so it's a CTO serial number
+                memcpy(SerialNo, serialNumber + 12, 8);
+                memcpy(&SerialNo[8], serialNumber, 3);
+                SerialNo[11] = '-';
+                memcpy(&SerialNo[12], serialNumber + 3, 8);
+                SerialNo[20] = 0;
+            } else { // just a normal serial number
+                memcpy(SerialNo, serialNumber + 13, 8);
+                memcpy(&SerialNo[8], serialNumber, 3);
+                SerialNo[11] = 0;
+            }
+            return OSString::withCString(SerialNo);
+        }
+    }
+    return NULL;
+}
+
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #undef super
@@ -1084,7 +1133,7 @@ OSMetaClassDefineReservedUnused(IOPlatformExpertDevice,  3);
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 bool IOPlatformExpertDevice::compareName( OSString * name,
-                                        OSString ** matched) const
+                                        OSString ** matched ) const
 {
     return( IODTCompareNubName( this, name, matched ));
 }
@@ -1146,7 +1195,7 @@ OSMetaClassDefineReservedUnused(IOPlatformDevice,  3);
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 bool IOPlatformDevice::compareName( OSString * name,
-					OSString ** matched) const
+					OSString ** matched ) const
 {
     return( ((IOPlatformExpert *)getProvider())->
 		compareNubName( this, name, matched ));

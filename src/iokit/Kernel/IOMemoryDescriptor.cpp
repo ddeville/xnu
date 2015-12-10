@@ -36,6 +36,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOMapper.h>
+#include <IOKit/IOKitKeysPrivate.h>
 
 #include <IOKit/IOKitDebug.h>
 
@@ -54,6 +55,7 @@ __BEGIN_DECLS
 #ifndef i386
 struct phys_entry      *pmap_find_physentry(ppnum_t pa);
 #endif
+extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 void ipc_port_release_send(ipc_port_t port);
 
 /* Copy between a physical page and a virtual address in the given vm_map */
@@ -74,6 +76,15 @@ device_pager_populate_object(
 	vm_object_offset_t	offset,
 	ppnum_t			phys_addr,
 	vm_size_t		size);
+kern_return_t
+memory_object_iopl_request(
+	ipc_port_t		port,
+	memory_object_offset_t	offset,
+	vm_size_t		*upl_size,
+	upl_t			*upl_ptr,
+	upl_page_info_array_t	user_page_list,
+	unsigned int		*page_list_count,
+	int			*flags);
 
 /*
  *	Page fault handling based on vm_map (or entries therein)
@@ -97,7 +108,10 @@ kern_return_t IOIteratePageableMaps(vm_size_t size,
                     IOIteratePageableMapsCallback callback, void * ref);
 __END_DECLS
 
+#define kIOMaximumMappedIOByteCount	(512*1024*1024)
+
 static IOMapper * gIOSystemMapper;
+static ppnum_t	  gIOMaximumMappedIOPageCount = atop_32(kIOMaximumMappedIOByteCount);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -625,6 +639,39 @@ panic("IOGMD::iWO(): bad type");	// @@@ gvdl: for testing
             dataP->fMapper = mapper;
             dataP->fPageCnt = _pages;
 
+	    if (kIOMemoryPersistent & _flags)
+	    {
+		kern_return_t error;
+		ipc_port_t sharedMem;
+	    
+		vm_size_t size = _pages << PAGE_SHIFT;
+		vm_address_t startPage;
+	
+		startPage = trunc_page_32(_ranges.v[0].address);
+	
+		vm_map_t theMap = ((_task == kernel_task) && (kIOMemoryBufferPageable & _flags)) 
+				? IOPageableMapForAddress(startPage)
+				: get_task_map(_task);
+	
+		vm_size_t actualSize = size;
+		error = mach_make_memory_entry( theMap,
+			    &actualSize, startPage,
+			    VM_PROT_READ | VM_PROT_WRITE, &sharedMem,
+			    NULL );
+	
+		if (KERN_SUCCESS == error) {
+		    if (actualSize == round_page_32(size)) {
+			_memEntry = (void *) sharedMem;
+		    } else {
+#if IOASSERT
+			IOLog("mach_make_memory_entry_64 (%08x) size (%08lx:%08x)\n",
+				    startPage, (UInt32)actualSize, size);
+#endif    
+			ipc_port_release_send( sharedMem );
+		    }
+		}
+	    }
+
             if ((_flags & kIOMemoryAutoPrepare)
              && prepare() != kIOReturnSuccess)
                 return false;
@@ -749,7 +796,7 @@ IOLog("IOGMD(%p): rB = o%lx, l%lx\n", this, offset, length);	// @@@ gvdl
             srcLen = remaining;
 
         copypv(srcAddr64, dstAddr, srcLen,
-                            cppvPsrc | cppvFsnk | cppvKmap);
+                            cppvPsrc | cppvNoRefSrc | cppvFsnk | cppvKmap);
 
         dstAddr   += srcLen;
         offset    += srcLen;
@@ -792,7 +839,7 @@ IOLog("IOGMD(%p): wB = o%lx, l%lx\n", this, offset, length);	// @@@ gvdl
             dstLen = remaining;
 
         copypv(srcAddr, (addr64_t) dstAddr64, dstLen,
-                            cppvPsnk | cppvFsnk | cppvNoModSnk | cppvKmap);
+                            cppvPsnk | cppvFsnk | cppvNoRefSrc | cppvNoModSnk | cppvKmap);
 
         srcAddr   += dstLen;
         offset    += dstLen;
@@ -1038,14 +1085,62 @@ IOPhysicalAddress IOGeneralMemoryDescriptor::getSourceSegment
 /* DEPRECATED */ }
 /* DEPRECATED */ /* USE INSTEAD: map(), readBytes(), writeBytes() */
 
+#ifdef __ppc__
+extern vm_offset_t		static_memory_end;
+#define io_kernel_static_end	static_memory_end
+#else
+extern vm_offset_t		first_avail;
+#define io_kernel_static_end	first_avail
+#endif
+
+static kern_return_t
+io_get_kernel_static_upl(
+	vm_map_t		map,
+	vm_address_t		offset,
+	vm_size_t		*upl_size,
+	upl_t			*upl,
+	upl_page_info_array_t	page_list,
+	unsigned int		*count,
+	int			*flags,
+	int             	force_data_sync)
+{
+    unsigned int pageCount, page;
+    ppnum_t phys;
+
+    pageCount = atop_32(*upl_size);
+    if (pageCount > *count)
+	pageCount = *count;
+
+    *upl = NULL;
+
+    for (page = 0; page < pageCount; page++)
+    {
+	phys = pmap_find_phys(kernel_pmap, ((addr64_t)offset) + ptoa_64(page));
+	if (!phys)
+	    break;
+	page_list[page].phys_addr = phys;
+	page_list[page].pageout	  = 0;
+	page_list[page].absent	  = 0;
+	page_list[page].dirty	  = 0;
+	page_list[page].precious  = 0;
+	page_list[page].device	  = 0;
+    }
+
+    return ((page >= pageCount) ? kIOReturnSuccess : kIOReturnVMError);
+}
+
 IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
 {
     IOReturn error = kIOReturnNoMemory;
     ioGMDData *dataP;
     ppnum_t mapBase = 0;
     IOMapper *mapper;
+    ipc_port_t sharedMem = (ipc_port_t) _memEntry;
 
     assert(!_wireCount);
+
+    if (_pages >= gIOMaximumMappedIOPageCount)
+	return kIOReturnNoResources;
 
     dataP = getDataP(_memoryEntries);
     mapper = dataP->fMapper;
@@ -1112,14 +1207,39 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
 
             vm_size_t ioplSize = round_page_32(numBytes);
             unsigned int numPageInfo = atop_32(ioplSize);
-            error = vm_map_get_upl(theMap, 
-                                   startPage,
-                                   &ioplSize,
-                                   &iopl.fIOPL,
-                                   baseInfo,
-                                   &numPageInfo,
-                                   &ioplFlags,
-                                   false);
+
+	    if ((theMap == kernel_map) && (startPage < io_kernel_static_end))
+	    {
+		error = io_get_kernel_static_upl(theMap, 
+				    startPage,
+				    &ioplSize,
+				    &iopl.fIOPL,
+				    baseInfo,
+				    &numPageInfo,
+				    &ioplFlags,
+				    false);
+
+	    } else if (sharedMem && (kIOMemoryPersistent & _flags)) {
+
+		error = memory_object_iopl_request(sharedMem, 
+				    ptoa_32(pageIndex),
+				    &ioplSize,
+				    &iopl.fIOPL,
+				    baseInfo,
+				    &numPageInfo,
+				    &ioplFlags);
+
+	    } else {
+		error = vm_map_get_upl(theMap, 
+				    startPage,
+				    &ioplSize,
+				    &iopl.fIOPL,
+				    baseInfo,
+				    &numPageInfo,
+				    &ioplFlags,
+				    false);
+	    }
+
             assert(ioplSize);
             if (error != KERN_SUCCESS)
                 goto abortExit;
@@ -1146,7 +1266,7 @@ IOReturn IOGeneralMemoryDescriptor::wireVirtual(IODirection forDirection)
             iopl.fIOMDOffset = mdOffset;
             iopl.fPageInfo = pageIndex;
 
-	    if (_flags & kIOMemoryAutoPrepare)
+	    if ((_flags & kIOMemoryAutoPrepare) && iopl.fIOPL)
 	    {
 		kernel_upl_commit(iopl.fIOPL, 0, 0);
 		iopl.fIOPL = 0;
@@ -1635,7 +1755,7 @@ static kern_return_t IOMemoryDescriptorMapAlloc(vm_map_t map, void * _ref)
                             prot, // cur
                             prot, // max
                             VM_INHERIT_NONE);
-    
+
             if( KERN_SUCCESS != err) {
                 ref->mapped = 0;
                 continue;
@@ -1750,6 +1870,7 @@ IOReturn IOMemoryDescriptor::handleFault(
     vm_size_t		bytes;
     vm_size_t		page;
     IOByteCount		pageOffset;
+    IOByteCount		pagerOffset;
     IOPhysicalLength	segLen;
     addr64_t		physAddr;
 
@@ -1770,6 +1891,7 @@ IOReturn IOMemoryDescriptor::handleFault(
     physAddr = getPhysicalSegment64( sourceOffset, &segLen );
     assert( physAddr );
     pageOffset = physAddr - trunc_page_64( physAddr );
+    pagerOffset = sourceOffset;
 
     size = length + pageOffset;
     physAddr -= pageOffset;
@@ -1816,11 +1938,12 @@ IOReturn IOMemoryDescriptor::handleFault(
 
             } else {
 
-                for( page = 0;
+	    for( page = 0;
                      (page < segLen) && (KERN_SUCCESS == err);
                      page += page_size) {
-                        err = device_pager_populate_object(pager, sourceOffset + page,
+                        err = device_pager_populate_object(pager, pagerOffset,
                         	(ppnum_t)((physAddr + page) >> PAGE_SHIFT), page_size);
+			pagerOffset += page_size;
                 }
             }
             assert( KERN_SUCCESS == err );
@@ -2065,7 +2188,7 @@ _IOMemoryMap * _IOMemoryMap::copyCompatible(
 {
     _IOMemoryMap * mapping;
 
-    if( (!task) || (task != getAddressTask()))
+    if( (!task) || (!addressMap) || (addressMap != get_task_map(task)))
 	return( 0 );
     if( (options ^ _options) & kIOMapReadOnly)
 	return( 0 );
@@ -2123,6 +2246,9 @@ void IOMemoryDescriptor::initialize( void )
 {
     if( 0 == gIOMemoryLock)
 	gIOMemoryLock = IORecursiveLockAlloc();
+
+    IORegistryEntry::getRegistryRoot()->setProperty(kIOMaximumMappedIOByteCountKey,
+						    ptoa_64(gIOMaximumMappedIOPageCount), 64);
 }
 
 void IOMemoryDescriptor::free( void )

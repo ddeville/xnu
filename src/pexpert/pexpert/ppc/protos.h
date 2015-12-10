@@ -79,12 +79,16 @@ extern void initialize_serial(void * scc_phys_base);
 
 extern void initialize_screen(void *, unsigned int);
 
-extern boolean_t vc_progress_initialize( void * desc,
-					 const unsigned char * data,
-					 const unsigned char * clut );
+extern void vc_progress_initialize( void * desc,
+				    const unsigned char * data,
+				    const unsigned char * clut );
 
 extern void vc_display_icon( void * desc,
 			     const unsigned char * data );
+
+//-------------------------------------------------------------------------
+// from osfmk/console/panic_dialog.c
+extern void panic_ui_initialize(const unsigned char * clut);
 
 // from osfmk/ppc/serial_console.c
 extern int  switch_to_serial_console(void);

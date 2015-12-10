@@ -66,8 +66,6 @@
 
 #ifndef	ASSEMBLER
 
-#include <stdint.h>
-
 /*
  * A natural_t is the type for the native
  * integer type, e.g. 32 or 64 or.. whatever

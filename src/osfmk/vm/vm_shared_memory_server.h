@@ -68,7 +68,6 @@ struct shared_region_task_mappings {
 
 /* defines for default environment, and co-resident systems */
 
-#define ENV_DEFAULT_SYSTEM	0
 #define ENV_DEFAULT_ROOT	0
 
 typedef	struct shared_region_task_mappings *shared_region_task_mappings_t;
@@ -206,6 +205,10 @@ extern kern_return_t shared_region_mapping_ref(
 extern kern_return_t shared_region_mapping_dealloc(
 				shared_region_mapping_t	shared_region);
 
+__private_extern__ kern_return_t shared_region_mapping_dealloc_lock(
+				shared_region_mapping_t	shared_region,
+				int need_lock);
+
 extern kern_return_t shared_region_object_chain_attach(
 				shared_region_mapping_t	target_region,
 				shared_region_mapping_t	object_chain);
@@ -227,6 +230,10 @@ extern shared_region_mapping_t lookup_default_shared_region(
 
 extern void remove_default_shared_region(
 				shared_region_mapping_t system_region);
+
+__private_extern__ void remove_default_shared_region_lock(
+				shared_region_mapping_t system_region,
+				int need_lock);
 
 extern unsigned int lsf_mapping_pool_gauge();
 

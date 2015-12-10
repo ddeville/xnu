@@ -955,55 +955,98 @@ restart:
 	}
 
 	lru = global_user_profile_cache.age;
+	*profile = NULL;
 	for(i = 0; i<global_user_profile_cache.max_ele; i++) {
+		/* Skip entry if it is in the process of being reused */
+		if(global_user_profile_cache.profiles[i].data_vp ==
+						(struct vnode *)0xFFFFFFFF)
+			continue;
+		/* Otherwise grab the first empty entry */
 		if(global_user_profile_cache.profiles[i].data_vp == NULL) {
 			*profile = &global_user_profile_cache.profiles[i];
 			(*profile)->age = global_user_profile_cache.age;
-			global_user_profile_cache.age+=1;
 			break;
 		}
+		/* Otherwise grab the oldest entry */
 		if(global_user_profile_cache.profiles[i].age < lru) {
 			lru = global_user_profile_cache.profiles[i].age;
 			*profile = &global_user_profile_cache.profiles[i];
 		}
 	}
 
+	/* Did we set it? */
+	if (*profile == NULL) {
+		/*
+		 * No entries are available; this can only happen if all
+		 * of them are currently in the process of being reused;
+		 * if this happens, we sleep on the address of the first
+		 * element, and restart.  This is less than ideal, but we
+		 * know it will work because we know that there will be a
+		 * wakeup on any entry currently in the process of being
+		 * reused.
+		 *
+		 * XXX Reccomend a two handed clock and more than 3 total
+		 * XXX cache entries at some point in the future.
+		 */
+       		/*
+       		* drop funnel and wait 
+       		*/
+		(void)tsleep((void *)
+		 &global_user_profile_cache.profiles[0],
+			PRIBIO, "app_profile", 0);
+		goto restart;
+	}
+
+	/*
+	 * If it's currently busy, we've picked the one at the end of the
+	 * LRU list, but it's currently being actively used.  We sleep on
+	 * its address and restart.
+	 */
 	if ((*profile)->busy) {
        		/*
        		* drop funnel and wait 
        		*/
 		(void)tsleep((void *)
-			&(global_user_profile_cache), 
+			*profile, 
 			PRIBIO, "app_profile", 0);
 		goto restart;
 	}
 	(*profile)->busy = 1;
 	(*profile)->user = user;
 
-	if((*profile)->data_vp != NULL) {
+	/*
+	 * put dummy value in for now to get competing request to wait
+	 * above until we are finished
+	 *
+	 * Save the data_vp before setting it, so we can set it before
+	 * we kmem_free() or vrele().  If we don't do this, then we
+	 * have a potential funnel race condition we have to deal with.
+	 */
+	data_vp = (*profile)->data_vp;
+	(*profile)->data_vp = (struct vnode *)0xFFFFFFFF;
+
+	/*
+	 * Age the cache here in all cases; this guarantees that we won't
+	 * be reusing only one entry over and over, once the system reaches
+	 * steady-state.
+	 */
+	global_user_profile_cache.age+=1;
+
+	if(data_vp != NULL) {
 		kmem_free(kernel_map, 
 				(*profile)->buf_ptr, 4 * PAGE_SIZE);
 		if ((*profile)->names_vp) {
 			vrele((*profile)->names_vp);
 			(*profile)->names_vp = NULL;
 		}
-		if ((*profile)->data_vp) {
-			vrele((*profile)->data_vp);
-			(*profile)->data_vp = NULL;
-		}
+		vrele(data_vp);
 	}
-
-	/* put dummy value in for now to get */
-	/* competing request to wait above   */
-	/* until we are finished */
-	(*profile)->data_vp = (struct vnode *)0xFFFFFFFF;
 	
 	/* Try to open the appropriate users profile files */
 	/* If neither file is present, try to create them  */
 	/* If one file is present and the other not, fail. */
 	/* If the files do exist, check them for the app_file */
 	/* requested and read it in if present */
-
 
 	ret = kmem_alloc(kernel_map,
 		(vm_offset_t *)&profile_data_string, PATH_MAX);
@@ -1385,7 +1428,7 @@ bsd_search_page_cache_data_base(
 		resid_off = 0;
 		while(size) {
 			error = vn_rdwr(UIO_READ, vp, 
-				(caddr_t)(local_buf + resid_off),
+				CAST_DOWN(caddr_t, (local_buf + resid_off)),
 				size, file_off + resid_off, UIO_SYSSPACE, 
 				IO_NODELOCKED, p->p_ucred, &resid, p);
 			if((error) || (size == resid)) {

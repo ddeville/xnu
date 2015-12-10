@@ -261,7 +261,7 @@ int vmm_init_context(struct savearea *save)
     task_t				task;
     thread_act_t		fact, gact;
 
-	vmm_user_state = (vmm_state_page_t *)save->save_r4;		/* Get the user address of the comm area */
+	vmm_user_state = CAST_DOWN(vmm_state_page_t *, save->save_r4);  /* Get the user address of the comm area */
 	if ((unsigned int)vmm_user_state & (PAGE_SIZE - 1)) {	/* Make sure the comm area is page aligned */
 		save->save_r3 = KERN_FAILURE;			/* Return failure */
 		return 1;
@@ -287,15 +287,15 @@ int vmm_init_context(struct savearea *save)
 
 	task_lock(task);							/* Lock our task */
 
-	fact = (thread_act_t)task->thr_acts.next;	/* Get the first activation on task */
+	fact = (thread_act_t)task->threads.next;	/* Get the first activation on task */
 	gact = 0;									/* Pretend we didn't find it yet */
 
-	for(i = 0; i < task->thr_act_count; i++) {	/* All of the activations */
+	for(i = 0; i < task->thread_count; i++) {	/* All of the activations */
 		if(fact->mact.vmmControl) {				/* Is this a virtual machine monitor? */
 			gact = fact;						/* Yeah... */
 			break;								/* Bail the loop... */
 		}
-		fact = (thread_act_t)fact->thr_acts.next;	/* Go to the next one */
+		fact = (thread_act_t)fact->task_threads.next;	/* Go to the next one */
 	}
 	
 
@@ -353,7 +353,7 @@ int vmm_init_context(struct savearea *save)
 		goto return_in_shame;
 
 	/* Map the vmm state into the kernel's address space. */
-	conphys = pmap_find_phys(act->map->pmap, (addr64_t)vmm_user_state);
+	conphys = pmap_find_phys(act->map->pmap, (addr64_t)((uintptr_t)vmm_user_state));
 
 	/* Find a virtual address to use. */
 	ret = kmem_alloc_pageable(kernel_map, &conkern, PAGE_SIZE);
@@ -1001,7 +1001,7 @@ kern_return_t vmm_unmap_list(
 	if(cnt > kVmmMaxUnmapPages) return KERN_FAILURE;	/* They tried to unmap too many */
 	if(!cnt) return KERN_SUCCESS;					/* If they said none, we're done... */
 	
-	lst = lstx = &((vmm_comm_page_t *)CEntry->vmmContextKern)->vmcpComm[0];	/* Point to the first entry */
+	lst = (vmmUMList *)lstx = (vmmUMList64 *) &((vmm_comm_page_t *)CEntry->vmmContextKern)->vmcpComm[0];	/* Point to the first entry */
 	
 	for(i = 0; i < cnt; i++) {						/* Step and release all pages in list */
 		if(flavor) {								/* Check if 32- or 64-bit addresses */
@@ -1536,15 +1536,15 @@ int vmm_stop_vm(struct savearea *save)
 
 	task_lock(task);							/* Lock our task */
 
-	fact = (thread_act_t)task->thr_acts.next;	/* Get the first activation on task */
+	fact = (thread_act_t)task->threads.next;	/* Get the first activation on task */
 	act = 0;									/* Pretend we didn't find it yet */
 
-	for(i = 0; i < task->thr_act_count; i++) {	/* All of the activations */
+	for(i = 0; i < task->thread_count; i++) {	/* All of the activations */
 		if(fact->mact.vmmControl) {				/* Is this a virtual machine monitor? */
 			act = fact;							/* Yeah... */
 			break;								/* Bail the loop... */
 		}
-		fact = (thread_act_t)fact->thr_acts.next;	/* Go to the next one */
+		fact = (thread_act_t)fact->task_threads.next;	/* Go to the next one */
 	}
 
 	if(!((unsigned int)act)) {					/* See if we have VMMs yet */

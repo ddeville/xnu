@@ -110,13 +110,13 @@ static int output_kernel_symbols(struct proc *p)
     // Dispose of unnecessary gumf, the booter doesn't need to load these
     rc_mh = IODTGetLoaderInfo("Kernel-__HEADER",
 				(void **)&orig_mh, &orig_mhsize);
-    if (rc_mh && orig_mh)
+    if (rc_mh == 0 && orig_mh)
 	IODTFreeLoaderInfo("Kernel-__HEADER",
 			    (void *)orig_mh, round_page_32(orig_mhsize));
 
     rc_sc = IODTGetLoaderInfo("Kernel-__SYMTAB",
 				(void **) &orig_st, &orig_st_size);
-    if (rc_sc && orig_st)
+    if (rc_sc == 0 && orig_st)
 	IODTFreeLoaderInfo("Kernel-__SYMTAB",
 			    (void *)orig_st, round_page_32(orig_st_size));
 

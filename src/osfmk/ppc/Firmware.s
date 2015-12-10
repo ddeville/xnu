@@ -2433,7 +2433,7 @@ fwSCwrite:	ld		r5,scomdata(r3)					; Get the data
 
 LEXT(diagTrap)
 
-			li		r3,0							; Ignore TWI
+			li		r3,1							; Ignore TWI
 			blr										; Leave...
 
 

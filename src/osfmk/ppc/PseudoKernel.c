@@ -72,10 +72,10 @@ kern_return_t syscall_notify_interrupt ( void ) {
 
 	task_lock(task);						/* Lock our task */
 	
-	fact = (thread_act_t)task->thr_acts.next;		/* Get the first activation on task */
+	fact = (thread_act_t)task->threads.next;		/* Get the first activation on task */
 	act = 0;										/* Pretend we didn't find it yet */
 	
-	for(i = 0; i < task->thr_act_count; i++) {		/* Scan the whole list */
+	for(i = 0; i < task->thread_count; i++) {		/* Scan the whole list */
 		if(fact->mact.bbDescAddr) {					/* Is this a Blue thread? */
 			bttd = (BTTD_t *)(fact->mact.bbDescAddr & -PAGE_SIZE);
 			if(bttd->InterruptVector) {				/* Is this the Blue interrupt thread? */
@@ -83,7 +83,7 @@ kern_return_t syscall_notify_interrupt ( void ) {
 				break;								/* Found it, Bail the loop... */
 			}
 		}
-		fact = (thread_act_t)fact->thr_acts.next;	/* Go to the next one */
+		fact = (thread_act_t)fact->task_threads.next;	/* Go to the next one */
 	}
 
 	if(!act) {								/* Couldn't find a bluebox */
@@ -171,7 +171,7 @@ void bbSetRupt(ReturnHandler *rh, thread_act_t act) {
 				(kInPseudoKernel << kInterruptStateShift);
 				
 			bttd->exceptionInfo.srr0 = (unsigned int)sv->save_srr0;		/* Save the current PC */
-			sv->save_srr0 = (uint64_t)bttd->InterruptVector;	/* Set the new PC */
+			sv->save_srr0 = (uint64_t)act->mact.bbInterrupt;	/* Set the new PC */
 			bttd->exceptionInfo.sprg1 = (unsigned int)sv->save_r1;		/* Save the original R1 */
 			sv->save_r1 = (uint64_t)bttd->exceptionInfo.sprg0;	/* Set the new R1 */
 			bttd->exceptionInfo.srr1 = (unsigned int)sv->save_srr1;		/* Save the original MSR */
@@ -218,6 +218,7 @@ kern_return_t enable_bluebox(
 	vm_offset_t		kerndescaddr, origdescoffset;
 	kern_return_t 	ret;
 	ppnum_t			physdescpage;
+	BTTD_t			*bttd;
 	
 	th = current_thread();									/* Get our thread */					
 
@@ -259,16 +260,22 @@ kern_return_t enable_bluebox(
 		kerndescaddr, physdescpage, VM_PROT_READ|VM_PROT_WRITE, 
 		VM_WIMG_USE_DEFAULT, TRUE);
 	
+	bttd = (BTTD_t *)kerndescaddr;							/* Get the address in a convienient spot */ 
+	
 	th->top_act->mact.bbDescAddr = (unsigned int)kerndescaddr+origdescoffset;	/* Set kernel address of the table */
 	th->top_act->mact.bbUserDA = (unsigned int)Desc_TableStart;	/* Set user address of the table */
 	th->top_act->mact.bbTableStart = (unsigned int)TWI_TableStart;	/* Set address of the trap table */
 	th->top_act->mact.bbTaskID = (unsigned int)taskID;		/* Assign opaque task ID */
 	th->top_act->mact.bbTaskEnv = 0;						/* Clean task environment data */
 	th->top_act->mact.emPendRupts = 0;						/* Clean pending 'rupt count */
+	th->top_act->mact.bbTrap = bttd->TrapVector;			/* Remember trap vector */
+	th->top_act->mact.bbSysCall = bttd->SysCallVector;		/* Remember syscall vector */
+	th->top_act->mact.bbInterrupt = bttd->InterruptVector;	/* Remember interrupt vector */
+	th->top_act->mact.bbPending = bttd->PendingIntVector;	/* Remember pending vector */
 	th->top_act->mact.specFlags &= ~(bbNoMachSC | bbPreemptive);	/* Make sure mach SCs are enabled and we are not marked preemptive */
 	th->top_act->mact.specFlags |= bbThread;				/* Set that we are Classic thread */
 		
-	if(!(((BTTD_t *)kerndescaddr)->InterruptVector)) {		/* See if this is a preemptive (MP) BlueBox thread */
+	if(!(bttd->InterruptVector)) {							/* See if this is a preemptive (MP) BlueBox thread */
 		th->top_act->mact.specFlags |= bbPreemptive;		/* Yes, remember it */
 	}
 		
@@ -372,17 +379,17 @@ int bb_settaskenv( struct savearea *save )
 	task = current_task();							/* Figure out who our task is */
 
 	task_lock(task);								/* Lock our task */
-	fact = (thread_act_t)task->thr_acts.next;		/* Get the first activation on task */
+	fact = (thread_act_t)task->threads.next;		/* Get the first activation on task */
 	act = 0;										/* Pretend we didn't find it yet */
 	
-	for(i = 0; i < task->thr_act_count; i++) {		/* Scan the whole list */
+	for(i = 0; i < task->thread_count; i++) {		/* Scan the whole list */
 		if(fact->mact.bbDescAddr) {					/* Is this a Blue thread? */
 			if ( fact->mact.bbTaskID == save->save_r3 ) {	/* Is this the task we are looking for? */
 				act = fact;							/* Yeah... */
 				break;								/* Found it, Bail the loop... */
 			}
 		}
-		fact = (thread_act_t)fact->thr_acts.next;	/* Go to the next one */
+		fact = (thread_act_t)fact->task_threads.next;	/* Go to the next one */
 	}
 
 	if ( !act || !act->active) {

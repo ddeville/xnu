@@ -32,7 +32,7 @@ enum {
     kIOMemoryPageable	      		= 0x00000020,
     kIOMemorySharingTypeMask		= 0x000f0000,
     kIOMemoryUnshared			= 0x00000000,
-    kIOMemoryKernelUserShared		= 0x00010000,
+    kIOMemoryKernelUserShared		= 0x00010000
 };
 
 #define _IOBUFFERMEMORYDESCRIPTOR_INTASKWITHOPTIONS_	1

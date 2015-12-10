@@ -69,6 +69,7 @@
 #include <mach/vm_attributes.h>
 #include <mach/vm_param.h>
 #include <mach/vm_behavior.h>
+#include <mach/vm_statistics.h>
 #include <kern/assert.h>
 #include <kern/counters.h>
 #include <kern/zalloc.h>
@@ -302,6 +303,9 @@ int		kentry_count = 2048;		/* to init kentry_data_size */
  *	operations.  Any copyout larger will NOT be aggressively entered.
  */
 vm_size_t vm_map_aggressive_enter_max;		/* set by bootstrap */
+
+/* Skip acquiring locks if we're in the midst of a kernel core dump */
+extern unsigned int not_in_kdp;
 
 void
 vm_map_init(
@@ -855,9 +859,11 @@ void vm_map_swapout(vm_map_t map)
  *	future lookups.  Performs necessary interlocks.
  */
 #define	SAVE_HINT(map,value) \
+MACRO_BEGIN \
 		mutex_lock(&(map)->s_lock); \
 		(map)->hint = (value); \
-		mutex_unlock(&(map)->s_lock);
+		mutex_unlock(&(map)->s_lock); \
+MACRO_END
 
 /*
  *	vm_map_lookup_entry:	[ internal use only ]
@@ -882,10 +888,11 @@ vm_map_lookup_entry(
 	 *	Start looking either from the head of the
 	 *	list, or from the hint.
 	 */
-
-	mutex_lock(&map->s_lock);
+	if (not_in_kdp)
+	  mutex_lock(&map->s_lock);
 	cur = map->hint;
-	mutex_unlock(&map->s_lock);
+	if (not_in_kdp)
+	  mutex_unlock(&map->s_lock);
 
 	if (cur == vm_map_to_entry(map))
 		cur = cur->vme_next;
@@ -929,7 +936,8 @@ vm_map_lookup_entry(
 				 */
 
 				*entry = cur;
-				SAVE_HINT(map, cur);
+				if (not_in_kdp)
+				  SAVE_HINT(map, cur);
 				return(TRUE);
 			}
 			break;
@@ -937,7 +945,8 @@ vm_map_lookup_entry(
 		cur = cur->vme_next;
 	}
 	*entry = cur->vme_prev;
-	SAVE_HINT(map, *entry);
+	if (not_in_kdp)
+	  SAVE_HINT(map, *entry);
 	return(FALSE);
 }
 
@@ -1369,7 +1378,7 @@ vm_map_enter(
 	    (entry->max_protection == max_protection) &&
 	    (entry->behavior == VM_BEHAVIOR_DEFAULT) &&
 	    (entry->in_transition == 0) &&
-	    ((entry->vme_end - entry->vme_start) + size < NO_COALESCE_LIMIT) &&
+	    ((alias == VM_MEMORY_REALLOC) || ((entry->vme_end - entry->vme_start) + size < NO_COALESCE_LIMIT)) &&
 	    (entry->wired_count == 0)) { /* implies user_wired_count == 0 */
 		if (vm_object_coalesce(entry->object.vm_object,
 				VM_OBJECT_NULL,
@@ -2262,7 +2271,7 @@ vm_map_wire_nested(
 				rc = vm_map_wire_nested(entry->object.sub_map, 
 						sub_start, sub_end,
 						access_type, 
-						user_wire, pmap, pmap_addr);
+						user_wire, map_pmap, pmap_addr);
 				vm_map_lock(map);
 			}
 			s = entry->vme_start;
@@ -2697,8 +2706,9 @@ vm_map_unwire_nested(
 			   continue;
 			} else {
 			   vm_map_unlock(map);
-			   vm_map_unwire_nested(entry->object.sub_map, 
-				sub_start, sub_end, user_wire, pmap, pmap_addr);
+			   vm_map_unwire_nested(entry->object.sub_map,
+			   	sub_start, sub_end, user_wire, map_pmap,
+				pmap_addr);
 			   vm_map_lock(map);
 
 			   if (last_timestamp+1 != map->timestamp) {
@@ -3233,19 +3243,46 @@ vm_map_delete(
 					entry->offset);
 			   }
 			} else {
-				if((map->mapped) && (map->ref_count)) {
-					vm_object_pmap_protect(
-						entry->object.vm_object,
-						entry->offset,
-						entry->vme_end - entry->vme_start,
-						PMAP_NULL,
-						entry->vme_start,
-						VM_PROT_NONE);
-				} else {
+			   object = entry->object.vm_object;
+			   if((map->mapped) && (map->ref_count)) {
+			      vm_object_pmap_protect(
+					object, entry->offset,
+					entry->vme_end - entry->vme_start,
+					PMAP_NULL,
+					entry->vme_start,
+					VM_PROT_NONE);
+			   } else if(object != NULL) {
+	    		      if ((object->shadow != NULL) || 
+				(object->phys_contiguous) ||
+				(object->resident_page_count > 
+				atop((entry->vme_end - entry->vme_start)/4))) {
 					pmap_remove(map->pmap, 
 						(addr64_t)(entry->vme_start), 
 						(addr64_t)(entry->vme_end));
+			      } else {
+				vm_page_t p;
+				vm_object_offset_t start_off;
+				vm_object_offset_t end_off;
+				start_off = entry->offset;
+				end_off = start_off + 
+				 	   (entry->vme_end - entry->vme_start);
+				vm_object_lock(object);
+		  		queue_iterate(&object->memq,
+						 p, vm_page_t, listq) {
+		    		   if ((!p->fictitious) && 
+					(p->offset >= start_off) &&
+					(p->offset < end_off)) {
+					vm_offset_t start;
+					start = entry->vme_start;
+					start += p->offset - start_off;
+					pmap_remove(
+						map->pmap, start, 
+						start + PAGE_SIZE);
+		    		   }
 				}
+				vm_object_unlock(object);
+			     }
+			  }
 			}
 		}
 
@@ -6120,8 +6157,7 @@ vm_map_fork_copy(
 		 */
 		vm_map_lock(old_map);
 		if (!vm_map_lookup_entry(old_map, start, &last) ||
-		    last->max_protection & VM_PROT_READ ==
-					 VM_PROT_NONE) {
+		    (last->max_protection & VM_PROT_READ) == VM_PROT_NONE) {
 			last = last->vme_next;
 		}
 		*old_entry_p = last;
@@ -7156,11 +7192,13 @@ vm_region_recurse_64(
 	recurse_count = *nesting_depth;
 
 LOOKUP_NEXT_BASE_ENTRY:
-	vm_map_lock_read(map);
+	if (not_in_kdp)
+	  vm_map_lock_read(map);
         if (!vm_map_lookup_entry(map, start, &tmp_entry)) {
 		if ((entry = tmp_entry->vme_next) == vm_map_to_entry(map)) {
-			vm_map_unlock_read(map);
-			return(KERN_INVALID_ADDRESS);
+		  if (not_in_kdp)
+		    vm_map_unlock_read(map);
+		  return(KERN_INVALID_ADDRESS);
 		}
 	} else {
 		entry = tmp_entry;
@@ -7174,7 +7212,8 @@ LOOKUP_NEXT_BASE_ENTRY:
 
 	while(entry->is_sub_map && recurse_count) {
 		recurse_count--;
-		vm_map_lock_read(entry->object.sub_map);
+		if (not_in_kdp)
+		  vm_map_lock_read(entry->object.sub_map);
 
 
 		if(entry == base_entry) {
@@ -7183,13 +7222,15 @@ LOOKUP_NEXT_BASE_ENTRY:
 		}
 
 		submap = entry->object.sub_map;
-		vm_map_unlock_read(map);
+		if (not_in_kdp)
+		  vm_map_unlock_read(map);
 		map = submap;
 
 		if (!vm_map_lookup_entry(map, start, &tmp_entry)) {
 			if ((entry = tmp_entry->vme_next) 
 						== vm_map_to_entry(map)) {
-				vm_map_unlock_read(map);
+			        if (not_in_kdp)
+				  vm_map_unlock_read(map);
 		        	map = base_map;
 	                	start = base_next;
 				recurse_count = 0;
@@ -7209,7 +7250,8 @@ LOOKUP_NEXT_BASE_ENTRY:
 			}
 			if(base_next <= 
 				(base_addr += (entry->vme_start - start))) {
-				vm_map_unlock_read(map);
+			        if (not_in_kdp)
+				  vm_map_unlock_read(map);
 				map = base_map;
 				start = base_next;
 				recurse_count = 0;
@@ -7235,7 +7277,8 @@ LOOKUP_NEXT_BASE_ENTRY:
 			}
 			base_addr += entry->vme_start;
 			if(base_addr >= base_next) {
-				vm_map_unlock_read(map);
+			        if (not_in_kdp)
+				  vm_map_unlock_read(map);
 				map = base_map;
 				start = base_next;
 				recurse_count = 0;
@@ -7275,7 +7318,8 @@ LOOKUP_NEXT_BASE_ENTRY:
 	extended.pages_dirtied = 0;
 	extended.external_pager = 0;
 	extended.shadow_depth = 0;
-
+	
+	if (not_in_kdp)
 	if(!entry->is_sub_map) {
 		vm_region_walk(entry, &extended, entry->offset, 
 				entry->vme_end - start, map, start);
@@ -7299,8 +7343,8 @@ LOOKUP_NEXT_BASE_ENTRY:
 	submap_info->pages_dirtied = extended.pages_dirtied;
 	submap_info->external_pager = extended.external_pager;
 	submap_info->shadow_depth = extended.shadow_depth;
-
-	vm_map_unlock_read(map);
+	if (not_in_kdp)
+	  vm_map_unlock_read(map);
 	return(KERN_SUCCESS);
 }
 
@@ -7647,7 +7691,7 @@ vm_region_look_for_page(
 	        	extended->pages_resident++;
 
 			if(object != caller_object)
-				vm_object_unlock(object);
+			     vm_object_unlock(object);
 
 			return;
 		}
@@ -7657,13 +7701,13 @@ vm_region_look_for_page(
 	        		extended->pages_swapped_out++;
 
 				if(object != caller_object)
-					vm_object_unlock(object);
+				     vm_object_unlock(object);
 
 				return;
 	    		}
 		}
 		if (shadow) {
-	    		vm_object_lock(shadow);
+		    vm_object_lock(shadow);
 
 			if ((ref_count = shadow->ref_count) > 1 && shadow->paging_in_progress)
 			        ref_count--;
@@ -7675,7 +7719,7 @@ vm_region_look_for_page(
 	        		max_refcnt = ref_count;
 			
 			if(object != caller_object)
-				vm_object_unlock(object);
+			     vm_object_unlock(object);
 
 			object = shadow;
 			shadow = object->shadow;
@@ -7683,7 +7727,7 @@ vm_region_look_for_page(
 			continue;
 		}
 		if(object != caller_object)
-			vm_object_unlock(object);
+		     vm_object_unlock(object);
 		break;
 	}
 }
@@ -7712,9 +7756,9 @@ vm_region_count_obj_refs(
 	        if (chk_obj == object)
 		    ref_count++;
 		if (tmp_obj = chk_obj->shadow)
-		    vm_object_lock(tmp_obj);
+		   vm_object_lock(tmp_obj);
 		vm_object_unlock(chk_obj);
-		
+
 		chk_obj = tmp_obj;
 	    }
 	}

@@ -206,7 +206,7 @@ bool IOKitDiagnostics::serialize(OSSerialize *s) const
     updateOffset( dict, debug_container_malloc_size, "Container allocation" );
     updateOffset( dict, debug_iomalloc_size, "IOMalloc allocation" );
 
-    dict->setObject( "Classes", OSMetaClass::getClassDictionary() );
+    OSMetaClass::serializeClassDictionary(dict);
 
     ok = dict->serialize( s );
 

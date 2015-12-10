@@ -46,6 +46,7 @@
 #include <kern/cpu_data.h>
 #include <ppc/mappings.h>
 #include <ppc/Diagnostics.h>
+#include <ppc/trap.h>
 
 /* TODO: BOGUS TO BE REMOVED */
 int real_ncpus = 1;
@@ -425,8 +426,6 @@ cpu_start(
 		proc_info->debstack_top_ss = proc_info->debstackptr;
 #endif  /* MACH_KDP || MACH_KDB */
 		proc_info->interrupts_enabled = 0;
-		proc_info->active_kloaded = (unsigned int)&active_kloaded[cpu];
-		proc_info->active_stacks = (unsigned int)&active_stacks[cpu];
 		proc_info->need_ast = (unsigned int)&need_ast[cpu];
 		proc_info->FPU_owner = 0;
 		proc_info->VMX_owner = 0;
@@ -472,6 +471,8 @@ cpu_start(
 		return(ret);
 	}
 }
+
+perfTrap perfCpuSigHook = 0;            /* Pointer to CHUD cpu signal hook routine */
 
 /*
  *	Here is where we implement the receiver of the signaling protocol.
@@ -571,6 +572,21 @@ cpu_signal_handler(
 							timebaseAddr->done = TRUE;
 
 							return;
+
+						case CPRQsegload:
+							return;
+						
+ 						case CPRQchud:
+ 							parmAddr = (unsigned int *)holdParm2;	/* Get the destination address */
+ 							if(perfCpuSigHook) {
+ 								struct savearea *ssp = current_act()->mact.pcb;
+ 								if(ssp) {
+ 									(perfCpuSigHook)(parmAddr[1] /* request */, ssp, 0, 0);
+ 								}
+   							}
+ 							parmAddr[1] = 0;
+ 							parmAddr[0] = 0;		/* Show we're done */
+  							return;
 						
 						case CPRQscom:
 							fwSCOM((scomcomm *)holdParm2);	/* Do the function */
@@ -697,7 +713,7 @@ cpu_doshutdown(
 	void)
 {
 	enable_preemption();
-	processor_doshutdown(current_processor());
+	processor_offline(current_processor());
 }
 
 void
@@ -705,7 +721,8 @@ cpu_sleep(
 	void)
 {
 	struct per_proc_info	*proc_info;
-	unsigned int	cpu;
+	unsigned int	cpu, i;
+	unsigned int	wait_ncpus_sleep, ncpus_sleep;
 	facility_context *fowner;
 	extern vm_offset_t	intstack;
 	extern vm_offset_t	debstack;
@@ -749,6 +766,16 @@ cpu_sleep(
 					  
 			__asm__ volatile("sync");
 			__asm__ volatile("isync");
+		}
+
+		wait_ncpus_sleep = real_ncpus-1; 
+		ncpus_sleep = 0;
+		while (wait_ncpus_sleep != ncpus_sleep) {
+			ncpus_sleep = 0;
+			for(i=1; i < real_ncpus ; i++) {
+				if ((*(volatile short *)&per_proc_info[i].cpu_flags) & SleepState)
+					ncpus_sleep++;
+			}
 		}
 	}
 

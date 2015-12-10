@@ -255,5 +255,18 @@ extern uint64_t	mem_actual;			/* 64-bit size of memory - not limited by maxmem *
 extern uint64_t	sane_size;			/* Memory size to use for defaults calculations */
 extern addr64_t 	vm_last_addr;	/* Highest kernel virtual address known to the VM system */
 
+/* We need a way to get rid of compiler warnings when we cast from   */
+/* a 64 bit value to an address that is 32 bits.                     */
+/* We know at this point the cast is harmless but sometime in        */
+/* the future it may not be.                                         */
+/* When size of an int is no longer equal to size of uintptr_t then  */
+/* the compile will fail and we know we need to fix our cast.		 */
+#include <stdint.h>
+#ifndef __CAST_DOWN_CHECK
+#define __CAST_DOWN_CHECK
+typedef char __NEED_TO_CHANGE_CAST_DOWN[ sizeof(uintptr_t) == sizeof(int) ? 0 : -1 ];
+#define CAST_DOWN( type, addr )  ( ((type)((uintptr_t) (addr))) ) 
+#endif /* __CAST_DOWN_CHECK */
+
 #endif	/* ASSEMBLER */
 #endif	/* _MACH_VM_PARAM_H_ */

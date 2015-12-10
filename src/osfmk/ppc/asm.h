@@ -714,9 +714,7 @@
 #define data16	.byte 0x66
 #define addr16	.byte 0x67
 
-#if !GPROF
 #define MCOUNT
-#endif /* GPROF */
 
 #define ELF_FUNC(x)
 #define ELF_DATA(x)

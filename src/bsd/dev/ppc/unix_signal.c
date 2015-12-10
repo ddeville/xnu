@@ -65,6 +65,7 @@
  */
  
 #define UC_TRAD			1
+#define UC_TRAD_VEC		6
 #define UC_TRAD64		20
 #define UC_TRAD64_VEC		25
 #define UC_FLAVOR		30
@@ -95,6 +96,7 @@ sendsig(p, catcher, sig, mask, code)
 	int sig, mask;
 	u_long code;
 {
+	kern_return_t kretn;
 	struct mcontext mctx, *p_mctx;
 	struct mcontext64 mctx64, *p_mctx64;
 	struct ucontext uctx, *p_uctx;
@@ -191,8 +193,7 @@ sendsig(p, catcher, sig, mask, code)
         }
 
 
-	vec_save(th_act);
-	if (find_user_vec(th_act)) {
+	if (find_user_vec_curr()) {
 		vec_used = 1;
 
                 if ((ctx32 == 1) || dualcontext) {
@@ -395,8 +396,8 @@ sendsig(p, catcher, sig, mask, code)
 	mctx.ss.srr1 = get_msr_exportmask();	/* MSR_EXPORT_MASK_SET */
 	mctx.ss.r1 = sp;
 	state_count = PPC_THREAD_STATE_COUNT;
-	if (thread_setstatus(th_act, PPC_THREAD_STATE, &mctx.ss, &state_count)  != KERN_SUCCESS) {
-		goto bad;
+	if ((kretn = thread_setstatus(th_act, PPC_THREAD_STATE, &mctx.ss, &state_count))  != KERN_SUCCESS) {
+		panic("sendsig: thread_setstatus failed, ret = %08X\n", kretn);
 	}	
 	return;
 
@@ -423,6 +424,7 @@ bad:
  */
 
 #define FOR64_TRANSITION 1
+
 
 #ifdef FOR64_TRANSITION
 
@@ -600,8 +602,10 @@ sigreturn(p, uap, retval)
                     } 
                     break;
 		case UC_FLAVOR_VEC :
+		case UC_TRAD_VEC :
                                 vec_used = 1;
 		case UC_FLAVOR :
+		case UC_TRAD :
 		default: {
 			p_mctx = (struct mcontext *)mactx;	
 			tsptr = (void *)&p_mctx->ss;

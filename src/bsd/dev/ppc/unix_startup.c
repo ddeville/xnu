@@ -137,7 +137,7 @@ bsd_bufferinit()
 	bsd_startupearly();
 
    	ret = kmem_suballoc(kernel_map,
-			&mbutl,
+			(vm_offset_t *) &mbutl,
 			(vm_size_t) (nmbclusters * MCLBYTES),
 			FALSE,
 			TRUE,

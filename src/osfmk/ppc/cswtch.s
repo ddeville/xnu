@@ -41,49 +41,21 @@
 	.text
 	
 /*
- * void     load_context(thread_t        thread)
+ * void     machine_load_context(thread_t        thread)
  *
- * Load the context for the first kernel thread, and go.
- *
- * NOTE - if DEBUG is set, the former routine is a piece
- * of C capable of printing out debug info before calling the latter,
- * otherwise both entry points are identical.
+ * Load the context for the first thread to run on a
+ * cpu, and go.
  */
 
 			.align	5
-			.globl	EXT(load_context)
+			.globl	EXT(machine_load_context)
 
-LEXT(load_context)
-
-			.globl	EXT(Load_context)
-
-LEXT(Load_context)
-
-/*
- * Since this is the first thread, we came in on the interrupt
- * stack. The first thread never returns, so there is no need to
- * worry about saving its frame, hence we can reset the istackptr
- * back to the saved_state structure at it's top
- */
-			
-
-/*
- * get new thread pointer and set it into the active_threads pointer
- *
- */
-	
+LEXT(machine_load_context)
 			mfsprg	r6,0
 			lwz		r0,PP_INTSTACK_TOP_SS(r6)
 			stw		r0,PP_ISTACKPTR(r6)
-			stw		r3,PP_ACTIVE_THREAD(r6)
-
-/* Find the new stack and store it in active_stacks */
-	
-			lwz		r12,PP_ACTIVE_STACKS(r6)
-			lwz		r1,THREAD_KERNEL_STACK(r3)
-			lwz		r9,THREAD_TOP_ACT(r3)			/* Point to the active activation */
+			lwz		r9,THREAD_TOP_ACT(r3)			/* Set up the current thread */
 			mtsprg	1,r9
-			stw		r1,0(r12)
 			li		r0,0							/* Clear a register */
 			lwz		r3,ACT_MACT_PCB(r9)				/* Get the savearea used */
 			mfmsr	r5								/* Since we are passing control, get our MSR values */
@@ -93,11 +65,12 @@ LEXT(Load_context)
 			stw		r0,FM_BACKPTR(r1)				/* zero backptr */
 			stw		r5,savesrr1+4(r3)				/* Pass our MSR to the new guy */
 			stw		r11,ACT_MACT_PCB(r9)			/* Unstack our savearea */
-			b		EXT(exception_exit)				/* Go end it all... */
+			stw		r0,ACT_PREEMPT_CNT(r9)			/* Enable preemption */
+			b		EXT(exception_exit)				/* Go for it */
 	
-/* struct thread_shuttle *Switch_context(struct thread_shuttle   *old,
- * 				      	 void                    (*cont)(void),
- *				         struct thread_shuttle   *new)
+/* thread_t Switch_context(thread_t	old,
+ * 				      	 void		(*cont)(void),
+ *				         thread_t	new)
  *
  * Switch from one thread to another. If a continuation is supplied, then
  * we do not need to save callee save registers.
@@ -142,9 +115,7 @@ LEXT(Call_continuation)
 
 LEXT(Switch_context)
 
-			lwz		r11,THREAD_KERNEL_STACK(r5)		; Get the new stack pointer
 			mfsprg	r12,0							; Get the per_proc block
-			lwz		r10,PP_ACTIVE_STACKS(r12)		; Get the pointer to the current stack
 #if DEBUG
 			lwz		r0,PP_ISTACKPTR(r12)			; (DEBUG/TRACE) make sure we are not
 			mr.		r0,r0							; (DEBUG/TRACE) on the interrupt
@@ -152,59 +123,32 @@ LEXT(Switch_context)
 			BREAKPOINT_TRAP
 notonintstack:
 #endif	
-		
-#if 0
-			lwz		r8,lgPPStart(0)					; (TEST/DEBUG) Get the start of per_procs
-			sub		r7,r12,r8						; (TEST/DEBUG) Find offset to our per_proc
-			xori	r7,r7,0x1000					; (TEST/DEBUG) Switch to other proc
-			add		r8,r8,r7						; (TEST/DEBUG) Switch to it
-			lwz		r8,PP_ACTIVE_THREAD(r8)			; (TEST/DEBUG) Get the other active thread
-			cmplw	r8,r5							; (TEST/DEBUG) Trying to switch to an active thread?
-			bne++	snively							; (TEST/DEBUG) Nope...
-			BREAKPOINT_TRAP							; (TEST/DEBUG) Get to debugger...
-
-snively:											; (TEST/DEBUG)
-#endif
-
-			stw		r5,PP_ACTIVE_THREAD(r12)		; Make the new thread current
- 			lwz		r5,THREAD_TOP_ACT(r5)			; Get the new activation
-			stw		r4,THREAD_CONTINUATION(r3)		; Set continuation into the thread
-			lwz		r7,0(r10)						; Get the current stack
-			cmpwi	cr1,r4,0						; Remeber if there is a continuation - used waaaay down below 
-			stw		r11,0(r10)						; Save the new kernel stack address
-
+			lwz		r5,THREAD_TOP_ACT(r5)			; Get the new activation
 			lwz		r8,ACT_MACT_PCB(r5)				; Get the PCB for the new guy
 			lwz		r9,cioSpace(r5)					; Get copyin/out address space
-			stw		r7,THREAD_KERNEL_STACK(r3)		; Remember the current stack in the thread (do not need???)
-			mtsprg	1,r5							; Set the current activation pointer
+			cmpwi	cr1,r4,0						; Remeber if there is a continuation - used waaaay down below 
 			lwz		r7,CTHREAD_SELF(r5)				; Pick up the user assist word
 			lwz		r11,ACT_MACT_BTE(r5)			; Get BlueBox Task Environment
 			lwz		r6,cioRelo(r5)					; Get copyin/out relocation top
+			mtsprg	1,r5
 			lwz		r2,cioRelo+4(r5)				; Get copyin/out relocation bottom
 			
 			stw		r7,UAW(r12)						; Save the assist word for the "ultra fast path"
 
 			lwz		r7,ACT_MACT_SPF(r5)				; Get the special flags
 			
-			lwz		r0,ACT_KLOADED(r5)
 			sth		r9,ppCIOmp+mpSpace(r12)			; Save the space
 			stw		r6,ppCIOmp+mpNestReloc(r12)		; Save top part of physical address
 			stw		r2,ppCIOmp+mpNestReloc+4(r12)	; Save bottom part of physical address
-			lwz		r10,PP_ACTIVE_KLOADED(r12)		; Get kernel loaded flag address
-			subfic	r0,r0,0							; Get bit 0 to 0 if not kloaded, 1 otherwise
-			lwz		r2,traceMask(0)					; Get the enabled traces
 			stw		r11,ppbbTaskEnv(r12)			; Save the bb task env
-			srawi	r0,r0,31						; Get 0 if not kloaded, ffffffff otherwise
+			lwz		r2,traceMask(0)					; Get the enabled traces
 			stw		r7,spcFlags(r12)				; Set per_proc copy of the special flags
-			and		r0,r5,r0						; Get 0 if not kloaded, activation otherwise
-		
-			mr.		r2,r2							; Any tracing going on?
-			stw		r0,0(r10)						; Set the kloaded stuff
 			lis		r0,hi16(CutTrace)				; Trace FW call
-			lwz		r11,SAVprev+4(r8)				; Get the previous of the switchee savearea 
+			mr.		r2,r2							; Any tracing going on?
+			lwz		r11,SAVprev+4(r8)				; Get the previous of the switchee savearea
 			ori		r0,r0,lo16(CutTrace)			; Trace FW call
-			mr		r10,r3							; Save across trace
 			beq++	cswNoTrc						; No trace today, dude...
+			mr		r10,r3							; Save across trace
 			lwz		r2,THREAD_TOP_ACT(r3)			; Trace old activation
 			mr		r3,r11							; Trace prev savearea
 			sc										; Cut trace entry of context switch
@@ -541,13 +485,12 @@ LEXT(fpu_switch)
 #endif /* DEBUG */
 
 			mfsprg	r26,0							; Get the per_processor block
-			mfmsr	r19								; Get the current MSR 
+			mfmsr	r19								; Get the current MSR
+			mfsprg	r17,1							; Get the current thread
 			
 			mr		r25,r4							; Save the entry savearea
 			lwz		r22,FPUowner(r26)				; Get the thread that owns the FPU
-			lwz		r10,PP_ACTIVE_THREAD(r26)		; Get the pointer to the active thread
 			ori		r19,r19,lo16(MASK(MSR_FP))		; Enable the floating point feature
-			lwz		r17,THREAD_TOP_ACT(r10)			; Now get the activation that is running
 			
 			mtmsr	r19								; Enable floating point instructions
 			isync
@@ -659,7 +602,7 @@ fswusave:	lwz		r12,facAct(r22)					; Get the activation associated with the cont
 			li		r7,SAVfloat						; Get the floating point ID
 			stw		r12,SAVact(r3)					; Make sure we point to the right guy
 			stb		r7,SAVflags+2(r3)				; Set that we have a floating point save area
-			
+
 			li		r7,0							; Get the unlock value
 
 			beq--	fswnulock						; Skip unlock if user (we did not lock it)...
@@ -1131,13 +1074,12 @@ LEXT(vec_switch)
 #endif /* DEBUG */
 
 			mfsprg	r26,0							; Get the per_processor block
-			mfmsr	r19								; Get the current MSR 
+			mfmsr	r19								; Get the current MSR
+			mfsprg	r17,1							; Get the current thread
 			
 			mr		r25,r4							; Save the entry savearea
-			lwz		r22,VMXowner(r26)				; Get the thread that owns the vector
-			lwz		r10,PP_ACTIVE_THREAD(r26)		; Get the pointer to the active thread
 			oris	r19,r19,hi16(MASK(MSR_VEC))		; Enable the vector feature
-			lwz		r17,THREAD_TOP_ACT(r10)			; Now get the activation that is running
+			lwz		r22,VMXowner(r26)				; Get the thread that owns the vector
 				
 			mtmsr	r19								; Enable vector instructions
 			isync
@@ -1254,12 +1196,12 @@ vswsync:	lwarx	r19,0,r15						; Get the sync word
 			lwz		r0,VMXlevel(r22)				; Pick up the level again
 			li		r7,0							; Get unlock value
 			cmplw	r0,r31							; Same level?
-			beq++	fswusave						; Yeah, we expect it to be...
+			beq++	vswusave						; Yeah, we expect it to be...
 			
 			stw		r7,VMXsync(r22)					; Unlock lock. No need to sync here
 			
 			bl		EXT(save_ret)					; Toss save area because we are abandoning save				
-			b		fsnosave						; Skip the save...
+			b		vsnosave						; Skip the save...
 
 			.align	5
 
@@ -1271,7 +1213,7 @@ vswusave:	lwz		r12,facAct(r22)					; Get the activation associated with the cont
 			li		r7,SAVvector					; Get the vector ID
 			stw		r12,SAVact(r3)					; Make sure we point to the right guy
 			stb		r7,SAVflags+2(r3)				; Set that we have a vector save area
-		
+
 			li		r7,0							; Get the unlock value
 
 			beq--	vswnulock						; Skip unlock if user (we did not lock it)...
@@ -1605,8 +1547,7 @@ vtnoprev:	stw		r8,VMXsave(r3)					; Dequeue this savearea
 
 LEXT(fctx_test)
 			
-			mfsprg	r3,0							; Get the per_proc block
-			lwz		r3,PP_ACTIVE_THREAD(r3)			; Get the thread pointer
+			mfsprg	r3,1							; Get the current thread
 			mr.		r3,r3							; Are we actually up and running?
 			beqlr-									; No...
 			

@@ -34,13 +34,13 @@
 /* Define some useful masks that convert from bit numbers */
 
 #if __PPC__
-#if _BIG_ENDIAN
+#ifdef __BIG_ENDIAN__
 #ifndef ENDIAN_MASK
 #define ENDIAN_MASK(val,size) (1 << ((size-1) - val))
 #endif
 #else
 #error code not ported to little endian targets yet
-#endif /* _BIG_ENDIAN */
+#endif /* __BIG_ENDIAN__ */
 #endif /* __PPC__ */
 
 #define MASK32(PART)	ENDIAN_MASK(PART ## _BIT, 32)

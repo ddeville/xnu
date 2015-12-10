@@ -273,7 +273,7 @@ typedef struct mappingblok {
 extern mappingctl	mapCtl;				/* Mapping allocation control */
 
 extern addr64_t 	mapping_remove(pmap_t pmap, addr64_t va);	/* Remove a single mapping for this VADDR */
-extern mapping 		*mapping_find(struct pmap *pmap, addr64_t va, addr64_t *nextva, int full);	/* Finds a mapping */
+extern mapping 		*mapping_find(pmap_t pmap, addr64_t va, addr64_t *nextva, int full);	/* Finds a mapping */
 extern void 		mapping_free_init(vm_offset_t mbl, int perm, boolean_t locked);	/* Sets start and end of a block of mappings */
 extern void 		mapping_adjust(void);						/* Adjust free mapping count */
 extern void 		mapping_free_prime(void);					/* Primes the mapping block release list */
@@ -306,12 +306,12 @@ extern int			mapalc2(struct mappingblok *mb);			/* Finds and allcates a 2-bit ma
 extern void			ignore_zero_fault(boolean_t type);			/* Sets up to ignore or honor any fault on page 0 access for the current thread */
 
 
-extern mapping 		*hw_rem_map(struct pmap *pmap, addr64_t va, addr64_t *next);	/* Remove a mapping from the system */
-extern mapping 		*hw_purge_map(struct pmap *pmap, addr64_t va, addr64_t *next);	/* Remove a regular mapping from the system */
-extern mapping 		*hw_purge_space(struct phys_entry *pp, struct pmap *pmap);	/* Remove the first mapping for a specific pmap from physentry */
+extern mapping 		*hw_rem_map(pmap_t pmap, addr64_t va, addr64_t *next);	/* Remove a mapping from the system */
+extern mapping 		*hw_purge_map(pmap_t pmap, addr64_t va, addr64_t *next);	/* Remove a regular mapping from the system */
+extern mapping 		*hw_purge_space(struct phys_entry *pp, pmap_t pmap);	/* Remove the first mapping for a specific pmap from physentry */
 extern mapping 		*hw_purge_phys(struct phys_entry *pp);		/* Remove the first mapping for a physentry */
-extern mapping 		*hw_find_map(struct pmap *pmap, addr64_t va, addr64_t *nextva);	/* Finds a mapping */
-extern addr64_t		hw_add_map(struct pmap *pmap, struct mapping *mp);	/* Add a mapping to a pmap */
+extern mapping 		*hw_find_map(pmap_t pmap, addr64_t va, addr64_t *nextva);	/* Finds a mapping */
+extern addr64_t		hw_add_map(pmap_t pmap, struct mapping *mp);	/* Add a mapping to a pmap */
 extern int	 		hw_protect(pmap_t pmap, addr64_t va, vm_prot_t prot, addr64_t *nextva);	/* Change the protection of a virtual page */
 extern unsigned int	hw_test_rc(pmap_t pmap, addr64_t va, boolean_t reset);	/* Test and optionally reset the RC bit of specific mapping */
 
@@ -352,7 +352,7 @@ extern void 		hw_blow_seg(addr64_t seg);					/* Invalidate a segment */
 extern void 		invalidateSegs(pmap_t pmap);				/* Invalidate the segment cache */
 extern struct phys_entry *pmap_find_physentry(ppnum_t pa);
 extern void			mapLog(unsigned int laddr, unsigned int type, addr64_t va);
-extern unsigned int	mapSkipListVerifyC(struct pmap *pmap, unsigned long long *dumpa);
+extern unsigned int	mapSkipListVerifyC(pmap_t pmap, unsigned long long *dumpa);
 extern void			fillPage(ppnum_t pa, unsigned int fill);
 
 extern unsigned int	mappingdeb0;								/* (TEST/DEBUG) */

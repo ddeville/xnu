@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2001 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2003 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -83,6 +83,11 @@
 #include <vm/memory_object.h>
 #include <vm/vm_pageout.h>
 
+__private_extern__ load_struct_t *
+lsf_remove_regions_mappings_lock(
+	shared_region_mapping_t	region,
+	shared_region_task_mappings_t	sm_info,
+	int need_lock);
 
 
 vm_size_t        upl_offset_to_pagelist = 0;
@@ -1698,8 +1703,11 @@ redo_lookup:
 				map_entry->needs_copy = FALSE;
 				while (total_size) {
 				   if(next_entry->object.vm_object == object) {
+					shadow_object->ref_count++; 
+					vm_object_res_reference(shadow_object);
 					next_entry->object.vm_object 
 							= shadow_object;
+					vm_object_deallocate(object);
 					next_entry->offset 
 						= next_entry->vme_prev->offset +
 						(next_entry->vme_prev->vme_end 
@@ -2321,24 +2329,6 @@ REDISCOVER_ENTRY:
 					flags = MEMORY_OBJECT_COPY_SYNC;
 				}
 
-				if((local_object->paging_offset) &&
-						(local_object->pager == 0)) {
-				   /* 
-				    * do a little clean-up for our unorthodox
-				    * entry into a pager call from a non-pager
-				    * context.  Normally the pager code 
-				    * assumes that an object it has been called
-				    * with has a backing pager and so does
-				    * not bother to check the pager field
-				    * before relying on the paging_offset
-				    */
-				    vm_object_lock(local_object);
-				    if (local_object->pager == 0) {
-					local_object->paging_offset = 0;
-				    }
-				    vm_object_unlock(local_object);
-				}
-					
 				if (entry->object.vm_object->shadow && 
 					   entry->object.vm_object->copy) {
 				   vm_object_lock_request(
@@ -2346,8 +2336,7 @@ REDISCOVER_ENTRY:
 					(vm_object_offset_t)
 					((offset - local_start) +
 					 local_offset) +
-					local_object->shadow_offset +
-					local_object->paging_offset,
+					local_object->shadow_offset,
 					*upl_size, FALSE, 
 					MEMORY_OBJECT_DATA_SYNC,
 					VM_PROT_NO_CHANGE);
@@ -2366,29 +2355,10 @@ REDISCOVER_ENTRY:
 			vm_object_reference(local_object);
 		        vm_map_unlock(map);
 
-			if((local_object->paging_offset) && 
-					(local_object->pager == 0)) {
-			   /* 
-			    * do a little clean-up for our unorthodox
-			    * entry into a pager call from a non-pager
-			    * context.  Normally the pager code 
-			    * assumes that an object it has been called
-			    * with has a backing pager and so does
-			    * not bother to check the pager field
-			    * before relying on the paging_offset
-			    */
-			    vm_object_lock(local_object);
-			    if (local_object->pager == 0) {
-				local_object->paging_offset = 0;
-			    }
-			    vm_object_unlock(local_object);
-			}
-					
 			vm_object_lock_request(
 				   local_object,
 				   (vm_object_offset_t)
-				   ((offset - local_start) + local_offset) + 
-				   local_object->paging_offset,
+				   ((offset - local_start) + local_offset),
 				   (vm_object_size_t)*upl_size, FALSE, 
 				   MEMORY_OBJECT_DATA_SYNC,
 				   VM_PROT_NO_CHANGE);
@@ -2627,7 +2597,7 @@ shared_region_mapping_create(
 	(*shared_region)->text_region = text_region;
 	(*shared_region)->text_size = text_size;
 	(*shared_region)->fs_base = ENV_DEFAULT_ROOT;
-	(*shared_region)->system = ENV_DEFAULT_SYSTEM;
+	(*shared_region)->system = machine_slot[cpu_number()].cpu_type;
 	(*shared_region)->data_region = data_region;
 	(*shared_region)->data_size = data_size;
 	(*shared_region)->region_mappings = region_mappings;
@@ -2663,9 +2633,10 @@ shared_region_mapping_ref(
 	return KERN_SUCCESS;
 }
 
-kern_return_t
-shared_region_mapping_dealloc(
-	shared_region_mapping_t	shared_region)
+__private_extern__ kern_return_t
+shared_region_mapping_dealloc_lock(
+	shared_region_mapping_t	shared_region,
+	int need_lock)
 {
 	struct shared_region_task_mappings sm_info;
 	shared_region_mapping_t next = NULL;
@@ -2688,7 +2659,7 @@ shared_region_mapping_dealloc(
 			sm_info.self = (vm_offset_t)shared_region;
 
 			if(shared_region->region_mappings) {
-				lsf_remove_regions_mappings(shared_region, &sm_info);
+				lsf_remove_regions_mappings_lock(shared_region, &sm_info, need_lock);
 			}
 			if(((vm_named_entry_t)
 				(shared_region->text_region->ip_kobject))
@@ -2719,12 +2690,23 @@ shared_region_mapping_dealloc(
 			if((ref_count == 1) && 
 			  (shared_region->flags & SHARED_REGION_SYSTEM)
 			  && (shared_region->flags & ~SHARED_REGION_STALE)) {
-				remove_default_shared_region(shared_region);
+				remove_default_shared_region_lock(shared_region,need_lock);
 			}
 			break;
 		}
 	}
 	return KERN_SUCCESS;
+}
+
+/*
+ * Stub function; always indicates that the lock needs to be taken in the
+ * call to lsf_remove_regions_mappings_lock().
+ */
+kern_return_t
+shared_region_mapping_dealloc(
+	shared_region_mapping_t	shared_region)
+{
+	return shared_region_mapping_dealloc_lock(shared_region, 1);
 }
 
 ppnum_t
@@ -2805,27 +2787,32 @@ vm_map_get_phys_page(
 	return phys_page;
 }
 
+
+
 kern_return_t
 kernel_object_iopl_request(
 	vm_named_entry_t	named_entry,
 	memory_object_offset_t	offset,
-	vm_size_t		size,
+	vm_size_t		*upl_size,
 	upl_t			*upl_ptr,
 	upl_page_info_array_t	user_page_list,
 	unsigned int		*page_list_count,
-	int			cntrl_flags)
+	int			*flags)
 {
 	vm_object_t		object;
 	kern_return_t		ret;
 
+	int			caller_flags;
+
+	caller_flags = *flags;
 
 	/* a few checks to make sure user is obeying rules */
-	if(size == 0) {
+	if(*upl_size == 0) {
 		if(offset >= named_entry->size)
 			return(KERN_INVALID_RIGHT);
-		size = named_entry->size - offset;
+		*upl_size = named_entry->size - offset;
 	}
-	if(cntrl_flags & UPL_COPYOUT_FROM) {
+	if(caller_flags & UPL_COPYOUT_FROM) {
 		if((named_entry->protection & VM_PROT_READ) 
 					!= VM_PROT_READ) {
 			return(KERN_INVALID_RIGHT);
@@ -2837,7 +2824,7 @@ kernel_object_iopl_request(
 			return(KERN_INVALID_RIGHT);
 		}
 	}
-	if(named_entry->size < (offset + size))
+	if(named_entry->size < (offset + *upl_size))
 		return(KERN_INVALID_ARGUMENT);
 
 	/* the callers parameter offset is defined to be the */
@@ -2861,7 +2848,7 @@ kernel_object_iopl_request(
 		named_entry_unlock(named_entry);
 	} else {
 		object = vm_object_enter(named_entry->backing.pager, 
-				named_entry->size, 
+				named_entry->offset + named_entry->size, 
 				named_entry->internal, 
 				FALSE,
 				FALSE);
@@ -2886,14 +2873,27 @@ kernel_object_iopl_request(
 		vm_object_unlock(object);
 	}
 
+	if (!object->private) {
+		if (*upl_size > (MAX_UPL_TRANSFER*PAGE_SIZE))
+			*upl_size = (MAX_UPL_TRANSFER*PAGE_SIZE);
+		if (object->phys_contiguous) {
+			*flags = UPL_PHYS_CONTIG;
+		} else {
+			*flags = 0;
+		}
+	} else {
+		*flags = UPL_DEV_MEMORY | UPL_PHYS_CONTIG;
+	}
+
 	ret = vm_object_iopl_request(object,
 				     offset,
-				     size,
+				     *upl_size,
 				     upl_ptr,
 				     user_page_list,
 				     page_list_count,
-				     cntrl_flags);
+				     caller_flags);
 	vm_object_deallocate(object);
 	return ret;
 }
+
 #endif	/* VM_CPM */

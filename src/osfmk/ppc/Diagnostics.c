@@ -61,13 +61,13 @@
 #include <ppc/Diagnostics.h>
 #include <ppc/machine_cpu.h>
 #include <pexpert/pexpert.h>
-#include <ppc/POWERMAC/video_console.h>
+#include <console/video_console.h>
 #include <ppc/trap.h>
 
 extern struct vc_info vinfo;
 
 kern_return_t testPerfTrap(int trapno, struct savearea *ss, 
-	unsigned int dsisr, unsigned int dar);
+	unsigned int dsisr, addr64_t dar);
 
 int diagCall(struct savearea *save) {
 
@@ -272,7 +272,7 @@ int diagCall(struct savearea *save) {
 		case dgBootScreen:
 			
 			ml_set_interrupts_enabled(1);
-			(void)copyout((char *)&vinfo, (char *)save->save_r4, sizeof(struct vc_info));	/* Copy out the video info */
+			(void)copyout((char *)&vinfo, CAST_DOWN(char *, save->save_r4), sizeof(struct vc_info));	/* Copy out the video info */ 
 			ml_set_interrupts_enabled(0);
 			return 1;								/* Return and check for ASTs... */
 			
@@ -282,7 +282,7 @@ int diagCall(struct savearea *save) {
 		case dgCPNull:
 			
 			ml_set_interrupts_enabled(1);
-			(void)copyout((char *)&vinfo, (char *)save->save_r4, 0);	/* Copy out nothing */
+			(void)copyout((char *)&vinfo, CAST_DOWN(char *, save->save_r4), 0);	/* Copy out nothing */
 			ml_set_interrupts_enabled(0);
 			return 1;								/* Return and check for ASTs... */
 			
@@ -375,7 +375,7 @@ int diagCall(struct savearea *save) {
 };
 
 kern_return_t testPerfTrap(int trapno, struct savearea *ss, 
-	unsigned int dsisr, unsigned int dar) {
+	unsigned int dsisr, addr64_t dar) {
 
 	if(trapno != T_ALIGNMENT) return KERN_FAILURE;
 

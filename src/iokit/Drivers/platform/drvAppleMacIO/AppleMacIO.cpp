@@ -267,7 +267,7 @@ OSMetaClassDefineReservedUnused(AppleMacIODevice,  3);
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 bool AppleMacIODevice::compareName( OSString * name,
-					OSString ** matched = 0 ) const
+					OSString ** matched ) const
 {
   return (IODTCompareNubName(this, name, matched) ||
 	  IORegistryEntry::compareName(name, matched));

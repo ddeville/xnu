@@ -39,6 +39,7 @@
 #include <debug.h>
 #include <mach_assert.h>
 #include <mach/exception_types.h>
+#include <mach/kern_return.h>
 #include <mach/ppc/vm_param.h>
 
 #include <assym.s>
@@ -98,10 +99,10 @@ LEXT(thandler)										; Trap handler
 		
 			lwz		r1,PP_ISTACKPTR(r25)			; Get interrupt stack pointer
 	
+			mfsprg	r13,1							; Get the current thread
 			cmpwi	cr0,r1,0						; Are we on interrupt stack?					
-			lwz		r6,PP_ACTIVE_THREAD(r25)		; Get the pointer to the currently active thread
+			lwz		r6,ACT_THREAD(r13)				; Get the shuttle
 			beq-	cr0,EXT(ihandler)				; If on interrupt stack, treat this as interrupt...
-			lwz		r13,THREAD_TOP_ACT(r6)			; Point to the active activation
 			lwz		r26,ACT_MACT_SPF(r13)			; Get special flags
 			lwz		r8,ACT_MACT_PCB(r13)			; Get the last savearea used
 			rlwinm.	r26,r26,0,bbThreadbit,bbThreadbit	; Do we have Blue Box Assist active? 
@@ -178,6 +179,10 @@ tvecoff:	stw		r26,FM_BACKPTR(r1)				; Link back to the previous frame
 			rlwinm.	r0,r7,0,MSR_PR_BIT,MSR_PR_BIT	; Are we trapping from supervisor state? (cr0_eq == 1 if yes)
 
 			cmpi	cr2,r3,T_PREEMPT				; Is this a preemption?
+
+			beq--	.L_check_VM
+			stw		r4,ACT_MACT_UPCB(r13)			; Store user savearea
+.L_check_VM:
 			
 			crandc	cr0_eq,cr7_eq,cr0_eq			; Do not intercept if we are in the kernel (cr0_eq == 1 if yes)
 			
@@ -211,12 +216,12 @@ thread_return:
 			lwz		r11,SAVflags(r3)				; Get the flags of the current savearea
 			lwz		r0,savesrr1+4(r3)				; Get the MSR we are going to
 			lwz		r4,SAVprev+4(r3)				; Pick up the previous savearea 
-			mfsprg	r8,1							; Get the current activation
-			lwz		r1,PP_ACTIVE_THREAD(r10)		; Get the active thread 
+			mfsprg	r8,1							; Get the current thread
 			rlwinm	r11,r11,0,15,13					; Clear the syscall flag
 			rlwinm.	r0,r0,0,MSR_PR_BIT,MSR_PR_BIT	; Are we going to the user?
+			lwz		r1,ACT_THREAD(r8)				; Get the shuttle
 			stw		r11,SAVflags(r3)				; Save back the flags (with reset stack cleared) 
-
+			
 			lwz		r5,THREAD_KERNEL_STACK(r1)		; Get the base pointer to the stack 
 			stw		r4,ACT_MACT_PCB(r8)				; Point to the previous savearea (or 0 if none)
 			addi	r5,r5,KERNEL_STACK_SIZE-FM_SIZE	; Reset to empty 
@@ -290,13 +295,13 @@ LEXT(shandler)										; System call handler
 			mfsprg	r25,0							; Get the per proc area 
 			lwz		r0,saver0+4(r4)					; Get the original syscall number
 			lwz		r17,PP_ISTACKPTR(r25)			; Get interrupt stack pointer
+			mfsprg	r13,1							; Get the current thread 
 			rlwinm	r15,r0,0,0,19					; Clear the bottom of call number for fast check
 			mr.		r17,r17							; Are we on interrupt stack?
 			lwz		r9,savevrsave(r4)				; Get the VRsave register
 			beq--	EXT(ihandler)					; On interrupt stack, not allowed...
 			rlwinm.	r6,r7,0,MSR_VEC_BIT,MSR_VEC_BIT	; Was vector on?
-			lwz		r16,PP_ACTIVE_THREAD(r25)		; Get the thread pointer 
-			mfsprg	r13,1							; Pick up the active thread 
+			lwz		r16,ACT_THREAD(r13)				; Get the shuttle
 
 			beq++	svecoff							; Vector off, do not save vrsave...
 			stw		r9,liveVRS(r25)					; Set the live value
@@ -333,6 +338,7 @@ noassist:	cmplwi	r15,0x7000						; Do we have a fast path trap?
 #endif /* DEBUG */
 
 			stw		r4,ACT_MACT_PCB(r13)			; Point to our savearea
+			stw		r4,ACT_MACT_UPCB(r13)			; Store user savearea
 			li		r0,0							; Clear this out 
 			stw		r14,SAVprev+4(r4)				; Queue the new save area in the front 
 			stw		r13,SAVact(r4)					; Point the savearea at its activation
@@ -367,27 +373,22 @@ noassist:	cmplwi	r15,0x7000						; Do we have a fast path trap?
 			stw		r15,SAVflags(r30)				; Save syscall marker
 			beq--	cr6,exitFromVM					; It is time to exit from alternate context...
 			
-			beq-	ppcscall						; Call the ppc-only system call handler...
+			beq--	ppcscall						; Call the ppc-only system call handler...
 
 			mr.		r0,r0							; What kind is it?
 			mtmsr	r11								; Enable interruptions
 
 			blt--	.L_kernel_syscall				; System call number if negative, this is a mach call...
 											
+			lwz     r8,ACT_TASK(r13)				; Get our task
 			cmpwi	cr0,r0,0x7FFA					; Special blue box call?
 			beq--	.L_notify_interrupt_syscall		; Yeah, call it...
 			
-			lwz     r8,ACT_TASK(r13)				; Get our task
-			lis     r10,hi16(EXT(c_syscalls_unix))	; Get top half of counter address 
 			lwz     r7,TASK_SYSCALLS_UNIX(r8)		; Get the current count
-			ori     r10,r10,lo16(EXT(c_syscalls_unix))	; Get low half of counter address
-			addi    r7,r7,1							; Bump it
-			lwz     r9,0(r10)						; Get counter
-			stw     r7,TASK_SYSCALLS_UNIX(r8)		; Save it
 			mr      r3,r30							; Get PCB/savearea
 			mr      r4,r13							; current activation
-			addi    r9,r9,1							; Add 1 
-			stw     r9,0(r10)						; Save it back 
+			addi    r7,r7,1							; Bump it
+			stw     r7,TASK_SYSCALLS_UNIX(r8)		; Save it
 			bl      EXT(unix_syscall)				; Check out unix...
 
 .L_call_server_syscall_exception:		
@@ -401,7 +402,14 @@ noassist:	cmplwi	r15,0x7000						; Do we have a fast path trap?
 .L_notify_interrupt_syscall:
 			lwz		r3,saver3+4(r30)				; Get the new PC address to pass in
 			bl		EXT(syscall_notify_interrupt)
-			b		.L_syscall_return
+/*
+ * Ok, return from C function, R3 = return value
+ *
+ * saved state is still in R30 and the active thread is in R16	.	
+ */
+			mr		r31,r16							; Move the current thread pointer
+			stw		r3,saver3+4(r30)				; Stash the return code
+			b		.L_thread_syscall_ret_check_ast
 	
 ;
 ;			Handle PPC-only system call interface
@@ -471,6 +479,46 @@ LEXT(ppcscret)
 			b		.L_call_server_syscall_exception	; Go to common exit...
 
 
+
+/*
+ * we get here for mach system calls
+ * when kdebug tracing is enabled
+ */
+	
+ksystrace:	
+			mr		r4,r30						; Pass in saved state
+			bl      EXT(syscall_trace)
+			
+			cmplw	r31,r29						; Is this syscall in the table?	
+			add		r31,r27,r28					; Point right to the syscall table entry
+
+			bge-	.L_call_server_syscall_exception	; The syscall number is invalid
+	
+			lwz		r0,MACH_TRAP_FUNCTION(r31)	; Pick up the function address
+;
+;	NOTE: We do not support more than 8 parameters for PPC.  The only 
+;	system call to use more than 8 is mach_msg_overwrite_trap and it
+;	uses 9.  We pass a 0 in as number 9.
+;
+			lwz		r3,saver3+4(r30)  			; Restore r3 
+			lwz		r4,saver4+4(r30)  			; Restore r4 
+			mtctr	r0							; Set the function call address
+			lwz		r5,saver5+4(r30)  			; Restore r5 
+			lwz		r6,saver6+4(r30)  			; Restore r6
+			lwz		r7,saver7+4(r30)  			; Restore r7
+			li		r0,0						; Clear this out
+			lwz		r8,saver8+4(r30)  			; Restore r8 
+			lwz		r9,saver9+4(r30)  			; Restore r9 
+			lwz		r10,saver10+4(r30)  		; Restore r10
+			stw		r0,FM_ARG0(r1)				; Clear that 9th parameter just in case some fool uses it
+			bctrl								; perform the actual syscall
+	
+			mr		r4,r30						; Pass in the savearea
+			bl		EXT(syscall_trace_end)		; Trace the exit of the system call	
+			b		.L_mach_return
+
+	
+			
 /* Once here, we know that the syscall was -ve
  * we should still have r1=ksp,
  * r16		= pointer to current thread,
@@ -479,33 +527,33 @@ LEXT(ppcscret)
  * r30		= pointer to saved state (in pcb)
  */
 
-			.align	5
+				.align	5
 
 .L_kernel_syscall:	
 ;
 ; Call a function that can print out our syscall info 
 ; Note that we don t care about any volatiles yet
 ;
-			lis		r8,hi16(EXT(kdebug_enable))	; Get top of kdebug_enable 
-			ori		r8,r8,lo16(EXT(kdebug_enable))	; Get bottom of kdebug_enable 
+			lwz		r10,ACT_TASK(r13)			; Get our task 
 			lwz		r0,saver0+4(r30)
-			lwz		r8,0(r8)					; Get kdebug_enable 
-			lis		r29,hi16(EXT(mach_trap_count))	; Get address of count
-			neg		r31,r0						; Make this positive
-			ori		r29,r29,lo16(EXT(mach_trap_count))	; Get address of count
+			lis		r8,hi16(EXT(kdebug_enable))	; Get top of kdebug_enable 
 			lis		r28,hi16(EXT(mach_trap_table))	; Get address of table
-			cmplwi	r8,0						; Is kdebug_enable false?
-			lwz		r29,0(r29)					; Pick up the actual count of system calls
+			ori		r8,r8,lo16(EXT(kdebug_enable))	; Get bottom of kdebug_enable 
+			lwz		r8,0(r8)					; Get kdebug_enable 
+
+			lwz		r7,TASK_SYSCALLS_MACH(r10)	; Get the current count
+			neg		r31,r0						; Make this positive
 			slwi	r27,r31,MACH_TRAP_OFFSET_POW2	; Convert index to offset
 			ori		r28,r28,lo16(EXT(mach_trap_table))	; Get address of table
-			beq++	ksysnotrc					; No tracing...
-			mr		r4,r30						; Pass in saved state
-			bl      EXT(syscall_trace)
+			addi	r7,r7,1						; Bump TASK_SYSCALLS_MACH count
+			cmplwi	r8,0						; Is kdebug_enable non-zero
+			stw		r7,TASK_SYSCALLS_MACH(r10)	; Save count
+			bne--	ksystrace					; yes, tracing enabled
 			
-ksysnotrc:	cmplw	r31,r29						; Is this syscall in the table?	
+			cmplwi	r31,MACH_TRAP_TABLE_COUNT	; Is this syscall in the table?	
 			add		r31,r27,r28					; Point right to the syscall table entry
 
-			bge-	.L_call_server_syscall_exception	; The syscall number is invalid
+			bge--	.L_call_server_syscall_exception	; The syscall number is invalid
 	
 			lwz		r0,MACH_TRAP_FUNCTION(r31)	; Pick up the function address
 
@@ -514,73 +562,46 @@ ksysnotrc:	cmplw	r31,r29						; Is this syscall in the table?
 ;	system call to use more than 8 is mach_msg_overwrite_trap and it
 ;	uses 9.  We pass a 0 in as number 9.
 ;
-			lwz		r8,ACT_TASK(r13)			; Get our task 
-			lis		r29,hi16(EXT(kern_invalid))	; Get high half of invalid syscall function
-			ori		r29,r29,lo16(EXT(kern_invalid))	; Get low half of invalid syscall function
-			lwz		r7,TASK_SYSCALLS_MACH(r8)		; Get the current count
-			lis		r10,hi16(EXT(c_syscalls_mach))	; Get top half of counter address 
 			lwz		r3,saver3+4(r30)  			; Restore r3 
-			addi	r7,r7,1						; Bump it
-			cmp		cr0,r0,r29					; Check if this is an invalid system call
-			ori		r10,r10,lo16(EXT(c_syscalls_mach))	; Get low half of counter address 
-			beq-	.L_call_server_syscall_exception	; We have a bad one...
-			stw		r7,TASK_SYSCALLS_MACH(r8)	; Save count
 			lwz		r4,saver4+4(r30)  			; Restore r4 
-			lwz		r9,0(r10)					; Get counter 	
-			mtctr	r0							; Set the function call address
 			lwz		r5,saver5+4(r30)  			; Restore r5 
+			mtctr	r0							; Set the function call address
 			lwz		r6,saver6+4(r30)  			; Restore r6
-			addi	r9,r9,1						; Add 1 
 			lwz		r7,saver7+4(r30)  			; Restore r7
-			li		r0,0						; Clear this out
 			lwz		r8,saver8+4(r30)  			; Restore r8 
-			stw		r9,0(r10)					; Save it back
+			li		r0,0						; Clear this out
 			lwz		r9,saver9+4(r30)  			; Restore r9 
 			lwz		r10,saver10+4(r30)  		; Restore r10
 			stw		r0,FM_ARG0(r1)				; Clear that 9th parameter just in case some fool uses it
 			bctrl								; perform the actual syscall
-	
-			lis		r10,hi16(EXT(kdebug_enable))	; Get top of kdebug_enable 
-			ori		r10,r10,lo16(EXT(kdebug_enable))	; Get bottom of kdebug_enable 
-			lwz		r10,0(r10)					; Get kdebug_enable 
-			cmplwi	r10,0						; Is kdebug_enable false?
-	
-			beq++	.L_syscall_return			; No tracing...
-			mr		r4,r30						; Pass in the savearea
-			bl		EXT(syscall_trace_end)		; Trace the exit of the system call	
-
-/* 'standard' syscall returns here - INTERRUPTS ARE STILL ON */
-
-/* r3 contains value that we're going to return to the user
- */
 
 /*
  * Ok, return from C function, R3 = return value
  *
  * get the active thread's PCB pointer and thus pointer to user state
- * saved state is still in R30 and the active thread is in R16	.	
+ * saved state is still in R30 and the active thread is in R16
  */
 
-/* Store return value into saved state structure, since
- * we need to pick up the value from here later - the
- * syscall may perform a thread_set_syscall_return
+.L_mach_return:	
+			mr		r31,r16						; Move the current thread pointer
+			stw		r3,saver3+4(r30)				; Stash the return code
+			cmpi		cr0,r3,KERN_INVALID_ARGUMENT			; deal with invalid system calls
+			beq-		cr0,.L_mach_invalid_ret				; otherwise fall through into the normal return path
+.L_mach_invalid_arg:		
+
+
+/* 'standard' syscall returns here - INTERRUPTS ARE STILL ON
+ * the syscall may perform a thread_set_syscall_return
  * followed by a thread_exception_return, ending up
  * at thread_syscall_return below, with SS_R3 having
  * been set up already
- */
-
-/* When we are here, r16 should point to the current thread,
+ *
+ * When we are here, r31 should point to the current thread,
  *                   r30 should point to the current pcb
+ *    r3 contains value that we're going to return to the user
+ *    which has already been stored back into the save area
  */
-
-/* save off return value, we must load it
- * back anyway for thread_exception_return
- */
-
-.L_syscall_return:	
-			mr		r31,r16							; Move the current thread pointer
-			stw		r3,saver3+4(r30)				; Stash the return code
-	
+		
 .L_thread_syscall_ret_check_ast:	
 			lis		r10,hi16(MASK(MSR_VEC))			; Get the vector enable
 			mfmsr	r12								; Get the current MSR 
@@ -621,6 +642,27 @@ scrnotkern:
 			bl		EXT(ast_taken)					; Process the pending ast
 			b		.L_thread_syscall_ret_check_ast	; Go see if there was another...
 
+.L_mach_invalid_ret:	
+/*
+ * need to figure out why we got an KERN_INVALID_ARG
+ * if it was due to a non-existent system call
+ * then we want to throw an exception... otherwise
+ * we want to pass the error code back to the caller
+ */
+			lwz     r0,saver0+4(r30)				; reload the original syscall number
+			neg		r28,r0							; Make this positive
+			slwi	r27,r28,MACH_TRAP_OFFSET_POW2	; Convert index to offset
+			lis		r28,hi16(EXT(mach_trap_table))	; Get address of table
+			ori		r28,r28,lo16(EXT(mach_trap_table))	; Get address of table
+			add		r28,r27,r28						; Point right to the syscall table entry
+			lwz		r27,MACH_TRAP_FUNCTION(r28)		; Pick up the function address
+			lis		r28,hi16(EXT(kern_invalid))		; Get high half of invalid syscall function
+			ori		r28,r28,lo16(EXT(kern_invalid))	; Get low half of invalid syscall function
+			cmpw	cr0,r27,r28						; Check if this is an invalid system call
+			beq--	.L_call_server_syscall_exception	; We have a bad system call
+			b		.L_mach_invalid_arg             ; a system call returned KERN_INVALID_ARG
+		
+	
 /* thread_exception_return returns to here, almost all
  * registers intact. It expects a full context restore
  * of what it hasn't restored itself (ie. what we use).
@@ -636,15 +678,16 @@ scrnotkern:
 .L_thread_syscall_return:
 
 			mr		r3,r30							; Get savearea to the correct register for common exit
-			lwz		r5,THREAD_KERNEL_STACK(r31)		; Get the base pointer to the stack 
+
 			lwz		r11,SAVflags(r30)				; Get the flags 
+			lwz		r5,THREAD_KERNEL_STACK(r31)		; Get the base pointer to the stack 
 			lwz		r4,SAVprev+4(r30)				; Get the previous save area
+			rlwinm	r11,r11,0,15,13					; Clear the syscall flag
 			mfsprg	r8,1				 			; Now find the current activation 
 			addi	r5,r5,KERNEL_STACK_SIZE-FM_SIZE	; Reset to empty
-			stw		r4,ACT_MACT_PCB(r8)				; Save previous save area
-			rlwinm	r11,r11,0,15,13					; Clear the syscall flag
-			stw		r5,ACT_MACT_KSP(r8)				; Save the empty stack pointer
 			stw		r11,SAVflags(r30)				; Stick back the flags
+			stw		r5,ACT_MACT_KSP(r8)				; Save the empty stack pointer
+			stw		r4,ACT_MACT_PCB(r8)				; Save previous save area
 			b		chkfac							; Go end it all...
 
 /*
@@ -675,16 +718,17 @@ LEXT(thread_exception_return)						; Directly return to user mode
 		
 			mfsprg	r10,0							; Get the per_processor block 
 			lwz		r4,PP_NEED_AST(r10)
-			li		r3,AST_ALL
 			lwz		r4,0(r4)
 			cmpi	cr0,r4,	0
-			li		r4,1
 			beq+		cr0,.L_exc_ret_no_ast
 		
 /* Yes there is, call ast_taken 
  * pretending that the user thread took an AST exception here,
  * ast_taken will save all state and bring us back here
  */
+	
+			li		r3,AST_ALL
+			li		r4,1
 			
 			bl		EXT(ast_taken)
 			b		.L_thread_exc_ret_check_ast		; check for a second AST (rare)
@@ -781,26 +825,26 @@ LEXT(ihandler)										; Interrupt handler */
 			li		r14,0							; Zero this for now
 			rlwinm.	r13,r10,0,MSR_VEC_BIT,MSR_VEC_BIT	; Was vector on?
 			lwz		r1,PP_ISTACKPTR(r25)			; Get the interrupt stack
-			li		r13,0							; Zero this for now
-			lwz		r16,PP_ACTIVE_THREAD(r25)		; Get the thread pointer
+			mfsprg	r13,1							; Get the current thread
+			li		r16,0							; Zero this for now
 
 			beq+	ivecoff							; Vector off, do not save vrsave...
 			stw		r7,liveVRS(r25)					; Set the live value
 
-ivecoff:	cmplwi	cr1,r16,0						; Are we still booting? 
-
-ifpoff:		mr.		r1,r1							; Is it active?
-			beq-	cr1,ihboot1						; We are still coming up...
-			lwz		r13,THREAD_TOP_ACT(r16)			; Pick up the active thread
+ivecoff:	li		r0,0							; Get a constant 0
+			rlwinm	r5,r10,0,MSR_PR_BIT,MSR_PR_BIT	; Are we trapping from supervisor state?
+			mr.		r1,r1							; Is it active?
+			cmplwi	cr2,r5,0						; cr2_eq == 1 if yes
+			lwz		r16,ACT_THREAD(r13)				; Get the shuttle
 			lwz		r14,ACT_MACT_PCB(r13)			; Now point to the PCB 
-
-ihboot1:	lwz		r9,saver1+4(r4)					; Pick up the rupt time stack
+			lwz		r9,saver1+4(r4)					; Pick up the rupt time stack
 			stw		r14,SAVprev+4(r4)				; Queue the new save area in the front
 			stw		r13,SAVact(r4)					; Point the savearea at its activation
-			beq-	cr1,ihboot4						; We are still coming up...
 			stw		r4,ACT_MACT_PCB(r13)			; Point to our savearea 
+			beq		cr2,ifromk
+			stw		r4,ACT_MACT_UPCB(r13)			; Store user savearea
 
-ihboot4:	bne		.L_istackfree					; Nope... 
+ifromk:		bne		.L_istackfree					; Nope... 
 
 /* We're already on the interrupt stack, get back the old
  * stack pointer and make room for a frame
@@ -889,7 +933,7 @@ LEXT(ihandler_ret)									; Marks our return point from debugger entry
 			mfsprg	r10,0							; Get the per_proc block
 		
 			lwz		r7,SAVflags(r3)					; Pick up the flags
-			lwz		r8,PP_ACTIVE_THREAD(r10)		; and the active thread 
+			mfsprg	r8,1							; Get the current thread
 			lwz		r9,SAVprev+4(r3)					; Get previous save area
 			cmplwi	cr1,r8,0						; Are we still initializing?
 			lwz		r12,savesrr1+4(r3)				; Get the MSR we will load on return 
@@ -1003,7 +1047,7 @@ chkfac:		lwz		r29,savesrr1+4(r3)				; Get the current MSR
 			stw		r19,FPUcpu(r20)					; Claim context for us
 			
 			eieio									; Make sure this gets out before owner clear
-
+			
 #if ppSize != 4096
 #error per_proc_info is not 4k in size
 #endif
@@ -1329,12 +1373,11 @@ chkenax:
 	
 #if DEBUG
 			lwz		r20,SAVact(r27)					; (TEST/DEBUG) Make sure our restore
-			lwz		r21,PP_ACTIVE_THREAD(r31)		; (TEST/DEBUG) with the current act.
+			mfsprg	r21, 1							; (TEST/DEBUG) with the current act.
 			cmpwi	r21,0							; (TEST/DEBUG)
-			beq-	yeswereok						; (TEST/DEBUG)
-			lwz		r21,THREAD_TOP_ACT(r21)			; (TEST/DEBUG)
+			beq--	yeswereok						; (TEST/DEBUG)
 			cmplw	r21,r20							; (TEST/DEBUG)
-			beq+	yeswereok						; (TEST/DEBUG)
+			beq++	yeswereok						; (TEST/DEBUG)
 
 			lis		r0,hi16(Choke)					; (TEST/DEBUG) Choke code
 			ori		r0,r0,lo16(Choke)				; (TEST/DEBUG) and the rest
@@ -1570,6 +1613,7 @@ versave:
 #endif
 
 #if 0
+		;; This code is broken and migration will make the matter even worse
 ;
 ;			Make sure that all savearea chains have the right type on them
 ;

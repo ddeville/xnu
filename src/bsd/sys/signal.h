@@ -144,11 +144,19 @@ union sigval {
 	void	*sigval_ptr;
 };
 
-#define	SIGEV_NONE	0		/* No async notification */
+#define	SIGEV_NONE		0		/* No async notification */
+#define	SIGEV_SIGNAL	1		/* aio - completion notification */
 #ifdef __APPLE_API_PRIVATE
-#define	SIGEV_SIGNAL	1		/* Generate a queued signal */
-#define SIGEV_THREAD	3		/* A notification function will be called to perfrom notification */
+#define SIGEV_THREAD	3		/* A notification function will be called to perform notification */
 #endif /*__APPLE_API_PRIVATE */
+
+struct sigevent {
+	int				sigev_notify;				/* Notification type */
+	int				sigev_signo;				/* Signal number */
+	union sigval	sigev_value;				/* Signal value */
+	void			(*sigev_notify_function)(union sigval);	  /* Notification function */
+	pthread_attr_t	*sigev_notify_attributes;	/* Notification attributes */
+};
 
 typedef struct __siginfo {
 	int	si_signo;		/* signal number */
@@ -282,8 +290,8 @@ typedef struct  sigaltstack stack_t;
 
 #define SS_ONSTACK	0x0001	/* take signal on signal stack */
 #define	SS_DISABLE	0x0004	/* disable taking signals on alternate stack */
-#define	MINSIGSTKSZ	8192			/* minimum allowable stack */
-#define	SIGSTKSZ	(MINSIGSTKSZ + 32768)	/* recommended stack size */
+#define	MINSIGSTKSZ	32768	/* (32K)minimum allowable stack */
+#define	SIGSTKSZ	131072	/* (128K)recommended stack size */
 
 /*
  * 4.3 compatibility:

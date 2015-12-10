@@ -889,6 +889,7 @@ vm_conflict_check(
 		}
 		if (entry->is_sub_map) {
 			vm_map_t	old_map;
+
 			old_map = map;
 			vm_map_lock(entry->object.sub_map);
 			map = entry->object.sub_map;
@@ -909,21 +910,46 @@ vm_conflict_check(
 					return KERN_FAILURE;
 				}
 				kr = KERN_ALREADY_WAITING;
-			} else if(
-				((file_off < ((obj->paging_offset) + obj_off)) &&
-				((file_off + len) > 
-					((obj->paging_offset) + obj_off))) ||
-				((file_off > ((obj->paging_offset) + obj_off)) &&
-				(((((obj->paging_offset) + obj_off)) + len) 
-					> file_off))) { 
-				vm_map_unlock(map);
-				return KERN_FAILURE;
+			} else {
+			       	vm_object_offset_t	obj_off_aligned;
+				vm_object_offset_t	file_off_aligned;
+
+				obj_off_aligned = obj_off & ~PAGE_MASK;
+				file_off_aligned = file_off & ~PAGE_MASK;
+
+				if (file_off_aligned == (obj->paging_offset + obj_off_aligned)) {
+				        /*
+					 * the target map and the file offset start in the same page
+					 * but are not identical... 
+					 */
+				        vm_map_unlock(map);
+					return KERN_FAILURE;
+				}
+				if ((file_off < (obj->paging_offset + obj_off_aligned)) &&
+				    ((file_off + len) > (obj->paging_offset + obj_off_aligned))) {
+				        /*
+					 * some portion of the tail of the I/O will fall
+					 * within the encompass of the target map
+					 */
+				        vm_map_unlock(map);
+					return KERN_FAILURE;
+				}
+				if ((file_off_aligned > (obj->paging_offset + obj_off)) &&
+				    (file_off_aligned < (obj->paging_offset + obj_off) + len)) {
+				        /*
+					 * the beginning page of the file offset falls within
+					 * the target map's encompass
+					 */
+				        vm_map_unlock(map);
+					return KERN_FAILURE;
+				}
 			}
 		} else if(kr != KERN_SUCCESS) {
+		        vm_map_unlock(map);
 			return KERN_FAILURE;
 		}
 
-		if(len < ((entry->vme_end - entry->vme_start) -
+		if(len <= ((entry->vme_end - entry->vme_start) -
 						(off - entry->vme_start))) {
 			vm_map_unlock(map);
 			return kr;
@@ -943,6 +969,4 @@ vm_conflict_check(
 
 	vm_map_unlock(map);
 	return kr;
-
-
 }

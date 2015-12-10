@@ -129,7 +129,7 @@ extern void GratefulDebInit(bootBumbleC *boot_video_info);
 extern void GratefulDebDisp(unsigned int coord, unsigned int data);
 extern void checkNMI(void);
 
-#pragma pack(1)							/* Make sure the structure stays as we defined it */
+#pragma pack(4)						/* Make sure the structure stays as we defined it */
 typedef struct GDWorkArea {			/* Grateful Deb work area one per processor */
 
 /*	Note that a lot of info is duplicated for each processor */

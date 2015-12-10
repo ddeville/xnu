@@ -252,6 +252,10 @@ extern
 int	vm_page_free_reserved;	/* How many pages reserved to do pageout */
 extern
 int	vm_page_laundry_count;	/* How many pages being laundered? */
+extern
+int	vm_page_burst_count;	/* How many pages being laundered to EMM? */
+extern
+int	vm_page_throttled_count;/* Count of zero-fill allocations throttled */
 
 decl_mutex_data(,vm_page_queue_lock)
 				/* lock on active and inactive page queues */
@@ -419,8 +423,9 @@ extern void		vm_page_gobble(
 		MACRO_END
 
 #define VM_PAGE_THROTTLED()						\
-		(vm_page_free_count < (vm_page_free_target -		\
-		 ((vm_page_free_target-vm_page_free_min)>>2)))
+		(vm_page_free_count < vm_page_free_min &&		\
+		 !current_thread()->vm_privilege && 			\
+		 ++vm_page_throttled_count)
 
 #define	VM_PAGE_WAIT()		((void)vm_page_wait(THREAD_UNINT))
 

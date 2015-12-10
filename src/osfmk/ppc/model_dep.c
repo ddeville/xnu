@@ -156,6 +156,8 @@ void lock_debugger(void);
 void dump_backtrace(unsigned int stackptr, unsigned int fence);
 void dump_savearea(savearea *sv, unsigned int fence);
 
+int packAsc (unsigned char *inbuf, unsigned int length);
+
 #if !MACH_KDB
 boolean_t	db_breakpoints_inserted = TRUE;
 jmp_buf_t *db_recover = 0;
@@ -277,6 +279,11 @@ machine_startup(boot_args *args)
 
 		sched_poll_yield_shift = boot_arg;
 	}
+	if (PE_parse_boot_arg("refunn", &boot_arg)) {
+		extern int refunnel_hint_enabled;
+
+		refunnel_hint_enabled = boot_arg;
+	}
 
 	machine_conf();
 
@@ -373,7 +380,7 @@ print_backtrace(struct savearea *ssp)
 
 	cpu  = cpu_number();					/* Just who are we anyways? */
 	if(pbtcpu != cpu) {						/* Allow recursion */
-		hw_atomic_add(&pbtcnt, 1);			/* Remember we are trying */
+		hw_atomic_add((uint32_t *)&pbtcnt, 1); /* Remember we are trying */
 		while(!hw_lock_try(&pbtlock));		/* Spin here until we can get in. If we never do, well, we're crashing anyhow... */	
 		pbtcpu = cpu;						/* Mark it as us */	
 	}	
@@ -418,7 +425,8 @@ print_backtrace(struct savearea *ssp)
 	kdb_printf("Proceeding back via exception chain:\n");
 
 	while(sv) {								/* Do them all... */
-		if(!((sv <= vm_last_addr) && (unsigned int)pmap_find_phys(kernel_pmap, (addr64_t)sv))) {	/* Valid address? */	
+		if(!(((addr64_t)((uintptr_t)sv) <= vm_last_addr) && 
+			(unsigned int)pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)sv)))) {	/* Valid address? */	
 			kdb_printf("   Exception state (sv=0x%08X) Not mapped or invalid. stopping...\n", sv);
 			break;
 		}
@@ -438,14 +446,14 @@ print_backtrace(struct savearea *ssp)
 			dump_savearea(sv, fence);		/* Dump this savearea */	
 		}	
 		
-		sv = (savearea *)sv->save_hdr.save_prev;	/* Back chain */
+		sv = CAST_DOWN(savearea *, sv->save_hdr.save_prev);	/* Back chain */ 
 	}
 	
 	kdb_printf("\nKernel version:\n%s\n",version);	/* Print kernel version */
 
 	pbtcpu = -1;							/* Mark as unowned */
 	hw_lock_unlock(&pbtlock);				/* Allow another back trace to happen */
-	hw_atomic_sub(&pbtcnt, 1);				/* Show we are done */
+	hw_atomic_sub((uint32_t *) &pbtcnt, 1);  /* Show we are done */
 
 	while(pbtcnt);							/* Wait for completion */
 
@@ -560,7 +568,33 @@ Debugger(const char	*message) {
 		/* everything should be printed now so copy to NVRAM
 		*/
 		if( debug_buf_size > 0)
-			pi_size = PESavePanicInfo( debug_buf, debug_buf_ptr - debug_buf);
+
+		  {
+		    /* Do not compress the panic log unless kernel debugging 
+		     * is disabled - the panic log isn't synced to NVRAM if 
+		     * debugging is enabled, and the panic log is valuable 
+		     * whilst debugging
+		     */
+		    if (!panicDebugging)
+		      {
+			unsigned int bufpos;
+			
+			/* Now call the compressor */
+			bufpos = packAsc (debug_buf, (unsigned int) (debug_buf_ptr - debug_buf) );
+			/* If compression was successful, use the compressed length 	           */
+			if (bufpos)
+			  {
+			    debug_buf_ptr = debug_buf + bufpos;
+			  }
+		      }
+		    /* Truncate if the buffer is larger than a certain magic 
+		     * size - this really ought to be some appropriate fraction
+		     * of the NVRAM image buffer, and is best done in the 
+		     * savePanicInfo() or PESavePanicInfo() calls 
+		     */
+		    pi_size = debug_buf_ptr - debug_buf;
+		    pi_size = PESavePanicInfo( debug_buf, ((pi_size > 2040) ? 2040 : pi_size));
+		  }
 			
 		if( !panicDebugging && (pi_size != 0) ) {
 			int	my_cpu, debugger_cpu;
@@ -866,4 +900,38 @@ void unlock_debugger(void) {
 
 }
 
+struct pasc {
+  unsigned a: 7;
+  unsigned b: 7;
+  unsigned c: 7;
+  unsigned d: 7;
+  unsigned e: 7;
+  unsigned f: 7;
+  unsigned g: 7;
+  unsigned h: 7;
+}  __attribute__((packed));
 
+typedef struct pasc pasc_t;
+
+int packAsc (unsigned char *inbuf, unsigned int length)
+{
+  unsigned int i, j = 0;
+  pasc_t pack;
+
+  for (i = 0; i < length; i+=8)
+    {
+      pack.a = inbuf[i];
+      pack.b = inbuf[i+1];
+      pack.c = inbuf[i+2];
+      pack.d = inbuf[i+3];
+      pack.e = inbuf[i+4];
+      pack.f = inbuf[i+5];
+      pack.g = inbuf[i+6];
+      pack.h = inbuf[i+7];
+      bcopy ((char *) &pack, inbuf + j, 7);
+      j += 7;
+    }
+  if (0 != (i - length))
+    inbuf[j - (i - length)] &= 0xFF << (8-(i - length));
+  return j-(((i-length) == 7) ? 6 : (i - length));
+}

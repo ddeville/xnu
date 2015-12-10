@@ -124,9 +124,9 @@ db_lookup_task_act(
 	register int act_id;
 
 	act_id = 0;
-	if (queue_first(&task->thr_acts) == 0)
+	if (queue_first(&task->threads) == 0)
 	    return(-1);
-	queue_iterate(&task->thr_acts, thr_act, thread_act_t, thr_acts) {
+	queue_iterate(&task->threads, thr_act, thread_act_t, task_threads) {
 	    if (target_act == thr_act)
 		return(act_id);
 	    if (act_id++ >= DB_MAX_THREADID)
@@ -155,7 +155,7 @@ db_lookup_act(thread_act_t target_act)
 	queue_iterate(&pset->tasks, task, task_t, pset_tasks) {
 		if (ntask++ > DB_MAX_TASKID)
 		    return(-1);
-		if (task->thr_act_count == 0)
+		if (task->thread_count == 0)
 		    continue;
 		act_id = db_lookup_task_act(task, target_act);
 		if (act_id >= 0)
@@ -215,9 +215,9 @@ db_lookup_act_id(
 	
 	if (act_id > DB_MAX_THREADID)
 	    return(THR_ACT_NULL);
-	if (queue_first(&task->thr_acts) == 0)
+	if (queue_first(&task->threads) == 0)
 	    return(THR_ACT_NULL);
-	queue_iterate(&task->thr_acts, thr_act, thread_act_t, thr_acts) {
+	queue_iterate(&task->threads, thr_act, thread_act_t, task_threads) {
 	    if (act_id-- <= 0)
 		return(thr_act);
 	}

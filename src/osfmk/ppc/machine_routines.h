@@ -154,7 +154,7 @@ void ml_phys_write_double_64(
 	addr64_t paddr, unsigned long long data);
 
 /* Struct for ml_processor_register */
-struct ml_processor_info_t {
+struct ml_processor_info {
 	cpu_id_t			cpu_id;
 	boolean_t			boot_cpu;
 	vm_offset_t			start_paddr;
@@ -163,13 +163,18 @@ struct ml_processor_info_t {
 	time_base_enable_t	time_base_enable;
 };
 
-typedef struct ml_processor_info_t ml_processor_info_t;
+typedef struct ml_processor_info ml_processor_info_t;
 
 /* Register a processor */
 kern_return_t ml_processor_register(
 	ml_processor_info_t *processor_info,
 	processor_t *processor,
 	ipi_handler_t *ipi_handler);
+
+/* Zero bytes starting at a physical address */
+void bzero_phys(
+	addr64_t phys_address,
+	uint32_t length);
 
 #endif /* __APPLE_API_UNSTABLE */
 

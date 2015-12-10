@@ -900,6 +900,15 @@ extern boolean_t vm_map_check_protection(
 #define	VM_MAP_REMOVE_INTERRUPTIBLE  	0x2
 #define	VM_MAP_REMOVE_WAIT_FOR_KWIRE  	0x4
 
+/*
+ * Backing store throttle when BS is exhausted
+ */
+extern unsigned int    vm_backing_store_low;
+
+extern void vm_backing_store_disable(
+			boolean_t	suspend);
+
+
 #endif  /* __APPLE_API_PRIVATE */
  
 #endif	/* _VM_VM_MAP_H_ */

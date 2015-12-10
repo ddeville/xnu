@@ -40,6 +40,7 @@
 #ifndef __ppc__
 #error This file is only useful on PowerPC.
 #endif
+#include <ppc/savearea.h>
 
 int diagCall(struct savearea *save);
 

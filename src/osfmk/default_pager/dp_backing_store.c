@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2003 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -1453,6 +1453,9 @@ ps_allocate_cluster(
 		ps = use_ps;
 		PSL_LOCK();
 		PS_LOCK(ps);
+
+		ASSERT(ps->ps_clcount != 0);
+
 		ps->ps_clcount--;
 		dp_pages_free -=  1 << ps->ps_clshift;
 		if(min_pages_trigger_port && 
@@ -1492,7 +1495,6 @@ ps_allocate_cluster(
 		}
 		return (vm_offset_t) -1;
 	}
-	ASSERT(ps->ps_clcount != 0);
 
 	/*
 	 * Look for an available cluster.  At the end of the loop,
@@ -1530,7 +1532,6 @@ ps_deallocate_cluster(
 	paging_segment_t	ps,
 	vm_offset_t		cluster)
 {
-	ipc_port_t trigger = IP_NULL;
 
 	if (cluster >= (vm_offset_t) ps->ps_ncls)
 		panic("ps_deallocate_cluster: Invalid cluster number");
@@ -1544,12 +1545,6 @@ ps_deallocate_cluster(
 	clrbit(ps->ps_bmap, cluster);
 	++ps->ps_clcount;
 	dp_pages_free +=  1 << ps->ps_clshift;
-	if(max_pages_trigger_port
-		&& (backing_store_release_trigger_disable == 0)
-		&& (dp_pages_free > maximum_pages_free)) {
-		trigger = max_pages_trigger_port;
-		max_pages_trigger_port = NULL;
-	}
 	PSL_UNLOCK();
 
 	/*
@@ -1569,21 +1564,6 @@ ps_deallocate_cluster(
 	if (ps_select_array[ps->ps_bs->bs_priority] == BS_FULLPRI)
 		ps_select_array[ps->ps_bs->bs_priority] = 0;
 	PSL_UNLOCK();
-
-	if (trigger != IP_NULL) {
-		VSL_LOCK();
-		if(backing_store_release_trigger_disable != 0) {
-			assert_wait((event_t) 
-			    &backing_store_release_trigger_disable, 
-			    THREAD_UNINT);
-			VSL_UNLOCK();
-			thread_block(THREAD_CONTINUE_NULL);
-		} else {
-			VSL_UNLOCK();
-		}
-		default_pager_space_alert(trigger, LO_WAT_ALERT);
-		ipc_port_release_send(trigger);
-	}
 
 	return;
 }
@@ -2669,7 +2649,7 @@ pvs_cluster_read(
 			        while (cl_index < pages_in_cl 
 						&& xfer_size < size) {
 				        /*
-					 * accumulate allocated pages within
+					 * accumulate allocated pages within 
 					 * a physical segment
 					 */
 				        if (CLMAP_ISSET(clmap, cl_index)) {
@@ -2685,7 +2665,7 @@ pvs_cluster_read(
 				if (cl_index < pages_in_cl 
 						|| xfer_size >= size) {
 				        /*
-					 * we've hit an unallocated page or
+					 * we've hit an unallocated page or 
 					 * the end of this request... go fire
 					 * the I/O
 					 */
@@ -2693,23 +2673,23 @@ pvs_cluster_read(
 				}
 				/*
 				 * we've hit the end of the current physical
-				 * segment and there's more to do, so try
+				 * segment and there's more to do, so try 
 				 * moving to the next one
 				 */
 				seg_index++;
 				  
 				ps_offset[seg_index] = 
-					ps_clmap(vs,
-						cur_offset & ~cl_mask,
+					ps_clmap(vs, 
+						cur_offset & ~cl_mask, 
 						&clmap, CL_FIND, 0, 0);
 				psp[seg_index] = CLMAP_PS(clmap);
 				ps_info_valid = 1;
 
 				if ((ps_offset[seg_index - 1] != (ps_offset[seg_index] - cl_size)) || (psp[seg_index - 1] != psp[seg_index])) {
 				        /*
-					 * if the physical segment we're about
-					 * to step into is not contiguous to
-					 * the one we're currently in, or it's
+					 * if the physical segment we're about 
+					 * to step into is not contiguous to 
+					 * the one we're currently in, or it's 
 					 * in a different paging file, or
 					 * it hasn't been allocated....
 					 * we stop here and generate the I/O
@@ -2718,7 +2698,7 @@ pvs_cluster_read(
 				}
 				/*
 				 * start with first page of the next physical
-				 * segment
+				 *  segment
 				 */
 				cl_index = 0;
 			}
@@ -2734,10 +2714,10 @@ pvs_cluster_read(
 					&upl, NULL, &page_list_count,
 					request_flags | UPL_SET_INTERNAL);
 
-				error = ps_read_file(psp[beg_pseg],
+				error = ps_read_file(psp[beg_pseg], 
 					upl, (vm_offset_t) 0, 
-					ps_offset[beg_pseg] +
-						(beg_indx * vm_page_size),
+					ps_offset[beg_pseg] + 
+						(beg_indx * vm_page_size), 
 					xfer_size, &residual, 0);
 			} else
 			        continue;
@@ -2745,22 +2725,22 @@ pvs_cluster_read(
 			failed_size = 0;
 
 			/*
-			 * Adjust counts and send response to VM.  Optimize
+			 * Adjust counts and send response to VM.  Optimize 
 			 * for the common case, i.e. no error and/or partial
-			 * data.  If there was an error, then we need to error
+			 * data. If there was an error, then we need to error
 			 * the entire range, even if some data was successfully
-			 * read.  If there was a partial read we may supply some
+			 * read. If there was a partial read we may supply some
 			 * data and may error some as well.  In all cases the
-			 * VM must receive some notification for every page in the
-			 * range.
+			 * VM must receive some notification for every page 
+			 * in the range.
 			 */
 			if ((error == KERN_SUCCESS) && (residual == 0)) {
 			        /*
 				 * Got everything we asked for, supply the data
-				 * to the VM.  Note that as a side effect of
-				 * supplying * the data, the buffer holding the
-				 * supplied data is * deallocated from the pager's
-				 * address space.
+				 * to the VM.  Note that as a side effect of 
+				 * supplying the data, the buffer holding the 
+				 * supplied data is deallocated from the pager's
+				 *  address space.
 				 */
 			        pvs_object_data_provided(
 					vs, upl, vs_offset, xfer_size);
@@ -2792,10 +2772,10 @@ pvs_cluster_read(
 
 						fill = residual 
 							& ~vm_page_size;
-						lsize = (xfer_size - residual) 
+						lsize = (xfer_size - residual)
 									 + fill;
 						pvs_object_data_provided(
-							vs, upl,
+							vs, upl, 
 							vs_offset, lsize);
 
 						if (lsize < xfer_size) {
@@ -2809,11 +2789,11 @@ pvs_cluster_read(
 			/*
 			 * If there was an error in any part of the range, tell
 			 * the VM. Note that error is explicitly checked again
-			 * since it can be modified above.
+			 *  since it can be modified above.
 			 */
 			if (error != KERN_SUCCESS) {
 				BS_STAT(psp[beg_pseg]->ps_bs,
-					psp[beg_pseg]->ps_bs->bs_pages_in_fail
+					psp[beg_pseg]->ps_bs->bs_pages_in_fail 
 						+= atop_32(failed_size));
 			}
 			size       -= xfer_size;
@@ -2854,7 +2834,13 @@ vs_cluster_write(
 	upl_page_info_t *pl;
 	int		page_index;
 	int		list_size;
+	int		pages_in_cl;
 	int		cl_size;
+	int             base_index;
+	int             seg_size;
+
+	pages_in_cl = 1 << vs->vs_clshift;
+	cl_size = pages_in_cl * vm_page_size;
 	
 	if (!dp_internal) {
 		int	     page_list_count;
@@ -2864,16 +2850,11 @@ vs_cluster_write(
 		int          num_dirty;
 		int          num_of_pages;
 		int          seg_index;
-		int          pages_in_cl;
-		int          must_abort;
 		vm_offset_t  upl_offset;
 		vm_offset_t  seg_offset;
-		vm_offset_t  ps_offset[(VM_SUPER_CLUSTER / PAGE_SIZE) >> VSTRUCT_DEF_CLSHIFT];
-		paging_segment_t   psp[(VM_SUPER_CLUSTER / PAGE_SIZE) >> VSTRUCT_DEF_CLSHIFT];
+		vm_offset_t  ps_offset[((VM_SUPER_CLUSTER / PAGE_SIZE) >> VSTRUCT_DEF_CLSHIFT) + 1];
+		paging_segment_t   psp[((VM_SUPER_CLUSTER / PAGE_SIZE) >> VSTRUCT_DEF_CLSHIFT) + 1];
 
-
-		pages_in_cl = 1 << vs->vs_clshift;
-		cl_size = pages_in_cl * vm_page_size;
 
 		if (bs_low) {
 			super_size = cl_size;
@@ -2898,14 +2879,16 @@ vs_cluster_write(
 
 		pl = UPL_GET_INTERNAL_PAGE_LIST(upl);
 
+		seg_size = cl_size - (upl->offset % cl_size);
+		upl_offset = upl->offset & ~(cl_size - 1);
+
 		for (seg_index = 0, transfer_size = upl->size; 
 						transfer_size > 0; ) {
-
 		        ps_offset[seg_index] = 
-				ps_clmap(vs, upl->offset + (seg_index * cl_size),
-				       &clmap, CL_ALLOC, 
-				       transfer_size < cl_size ? 
-				       transfer_size : cl_size, 0);
+				ps_clmap(vs, 
+					upl_offset,
+					&clmap, CL_ALLOC, 
+					cl_size, 0); 
 
 			if (ps_offset[seg_index] == (vm_offset_t) -1) {
 				upl_abort(upl, 0);
@@ -2916,30 +2899,41 @@ vs_cluster_write(
 			}
 			psp[seg_index] = CLMAP_PS(clmap);
 
-			if (transfer_size > cl_size) {
-			        transfer_size -= cl_size;
+			if (transfer_size > seg_size) {
+			        transfer_size -= seg_size;
+				upl_offset += cl_size;
+				seg_size    = cl_size;
 				seg_index++;
 			} else
 			        transfer_size = 0;
 		}
-		for (page_index = 0,
-				num_of_pages = upl->size / vm_page_size;
-				page_index < num_of_pages; ) {
+		/*
+		 * Ignore any non-present pages at the end of the
+		 * UPL.
+		 */
+		for (page_index = upl->size / vm_page_size; page_index > 0;) 
+			if (UPL_PAGE_PRESENT(pl, --page_index))
+				break;
+		num_of_pages = page_index + 1;
+
+		base_index = (upl->offset % cl_size) / PAGE_SIZE;
+
+		for (page_index = 0; page_index < num_of_pages; ) {
 			/*
 			 * skip over non-dirty pages
 			 */
 			for ( ; page_index < num_of_pages; page_index++) {
-			        if (UPL_DIRTY_PAGE(pl, page_index)
+			        if (UPL_DIRTY_PAGE(pl, page_index) 
 					|| UPL_PRECIOUS_PAGE(pl, page_index))
 				        /*
 					 * this is a page we need to write
-					 * go see if we can buddy it up with
+					 * go see if we can buddy it up with 
 					 * others that are contiguous to it
 					 */
 				        break;
 				/*
 				 * if the page is not-dirty, but present we 
-				 * need to commit it...  This is an unusual
+				 * need to commit it...  This is an unusual 
 				 * case since we only asked for dirty pages
 				 */
 				if (UPL_PAGE_PRESENT(pl, page_index)) {
@@ -2951,8 +2945,11 @@ vs_cluster_write(
 						 pl,
 						 page_list_count,
 						 &empty);
-					if (empty)
+					if (empty) {
+						assert(page_index == 
+						       num_of_pages - 1);
 						upl_deallocate(upl);
+					}
 				}
 			}
 			if (page_index == num_of_pages)
@@ -2962,15 +2959,15 @@ vs_cluster_write(
 			        break;
 
 			/*
-			 * gather up contiguous dirty pages... we have at
-			 * least 1 otherwise we would have bailed above
+			 * gather up contiguous dirty pages... we have at 
+			 * least 1 * otherwise we would have bailed above
 			 * make sure that each physical segment that we step
 			 * into is contiguous to the one we're currently in
 			 * if it's not, we have to stop and write what we have
 			 */
-			for (first_dirty = page_index;
+			for (first_dirty = page_index; 
 					page_index < num_of_pages; ) {
-			        if ( !UPL_DIRTY_PAGE(pl, page_index)
+				if ( !UPL_DIRTY_PAGE(pl, page_index) 
 					&& !UPL_PRECIOUS_PAGE(pl, page_index))
 				        break;
 				page_index++;
@@ -2983,19 +2980,18 @@ vs_cluster_write(
 				        int cur_seg;
 				        int nxt_seg;
 
-				        cur_seg =
-						(page_index - 1) / pages_in_cl;
-					nxt_seg = page_index / pages_in_cl;
+				        cur_seg = (base_index + (page_index - 1))/pages_in_cl;
+					nxt_seg = (base_index + page_index)/pages_in_cl;
 
 					if (cur_seg != nxt_seg) {
 					        if ((ps_offset[cur_seg] != (ps_offset[nxt_seg] - cl_size)) || (psp[cur_seg] != psp[nxt_seg]))
-					        /*
-						 * if the segment we're about
-						 * to step into is not
-						 * contiguous to the one we're
-						 * currently in, or it's in a
+						/*
+						 * if the segment we're about 
+						 * to step into is not 
+						 * contiguous to the one we're 
+						 * currently in, or it's in a 
 						 * different paging file....
-						 * we stop here and generate
+						 * we stop here and generate 
 						 * the I/O
 						 */
 						        break;
@@ -3003,20 +2999,15 @@ vs_cluster_write(
 				}
 			}
 			num_dirty = page_index - first_dirty;
-			must_abort = 1;
 
 			if (num_dirty) {
 			        upl_offset = first_dirty * vm_page_size;
-			        seg_index  = first_dirty / pages_in_cl;
-				seg_offset = upl_offset - (seg_index * cl_size);
 				transfer_size = num_dirty * vm_page_size;
 
-
 				while (transfer_size) {
-				        int seg_size;
 
 					if ((seg_size = cl_size - 
-						(upl_offset % cl_size)) 
+						((upl->offset + upl_offset) % cl_size)) 
 							> transfer_size)
 					        seg_size = transfer_size;
 
@@ -3029,22 +3020,26 @@ vs_cluster_write(
 				}
 			        upl_offset = first_dirty * vm_page_size;
 				transfer_size = num_dirty * vm_page_size;
+
+			        seg_index  = (base_index + first_dirty) / pages_in_cl;
+				seg_offset = (upl->offset + upl_offset) % cl_size;
+
 				error = ps_write_file(psp[seg_index], 
 						upl, upl_offset,
 						ps_offset[seg_index] 
 								+ seg_offset, 
 						transfer_size, flags);
-				must_abort = 0;
-			}
-			if (must_abort) {
+			} else {
 				boolean_t empty = FALSE;
 			        upl_abort_range(upl,
 						first_dirty * vm_page_size, 
 						num_dirty   * vm_page_size,
 						UPL_ABORT_NOTIFY_EMPTY,
 						&empty);
-				if (empty)
+				if (empty) {
+					assert(page_index == num_of_pages);
 					upl_deallocate(upl);
+				}
 			}
 		}
 
@@ -3083,7 +3078,7 @@ vs_cluster_write(
 						cnt, flags);
 				if (error)
 				        break;
-		   	}
+		   	   }
 			if (error)
 				break;
 		   	actual_offset += cnt;
@@ -3801,4 +3796,74 @@ default_pager_triggers(MACH_PORT_FACE default_pager,
 		ipc_port_release_send(release);
 	
 	return kr;
+}
+
+/*
+ * Monitor the amount of available backing store vs. the amount of
+ * required backing store, notify a listener (if present) when 
+ * backing store may safely be removed.
+ *
+ * We attempt to avoid the situation where backing store is 
+ * discarded en masse, as this can lead to thrashing as the
+ * backing store is compacted.
+ */
+
+#define PF_INTERVAL	3	/* time between free level checks */
+#define PF_LATENCY	10	/* number of intervals before release */
+
+static int dp_pages_free_low_count = 0;
+
+void
+default_pager_backing_store_monitor(thread_call_param_t p1, thread_call_param_t p2)
+{
+	unsigned long long	average;
+	ipc_port_t		trigger;
+	uint64_t		deadline;
+
+	/*
+	 * We determine whether it will be safe to release some
+	 * backing store by watching the free page level.  If
+	 * it remains below the maximum_pages_free threshold for
+	 * at least PF_LATENCY checks (taken at PF_INTERVAL seconds)
+	 * then we deem it safe.
+	 *
+	 * Note that this establishes a maximum rate at which backing
+	 * store will be released, as each notification (currently)
+	 * only results in a single backing store object being
+	 * released.
+	 */
+	if (dp_pages_free > maximum_pages_free) {
+		dp_pages_free_low_count++;
+	} else {
+		dp_pages_free_low_count = 0;
+	}
+
+	/* decide whether to send notification */
+	trigger = IP_NULL;
+	if (max_pages_trigger_port &&
+	    (backing_store_release_trigger_disable == 0) &&
+	    (dp_pages_free_low_count > PF_LATENCY)) {
+		trigger = max_pages_trigger_port;
+		max_pages_trigger_port = NULL;
+	}
+
+	/* send notification */
+	if (trigger != IP_NULL) {
+		VSL_LOCK();
+		if(backing_store_release_trigger_disable != 0) {
+			assert_wait((event_t) 
+				    &backing_store_release_trigger_disable, 
+				    THREAD_UNINT);
+			VSL_UNLOCK();
+			thread_block(THREAD_CONTINUE_NULL);
+		} else {
+			VSL_UNLOCK();
+		}
+		default_pager_space_alert(trigger, LO_WAT_ALERT);
+		ipc_port_release_send(trigger);
+		dp_pages_free_low_count = 0;
+	}
+
+	clock_interval_to_deadline(PF_INTERVAL, NSEC_PER_SEC, &deadline);
+	thread_call_func_delayed(default_pager_backing_store_monitor, NULL, deadline);
 }

@@ -84,11 +84,10 @@ void asp_init();
 void asp_ack_reply();
 void asp_nak_reply();
 void asp_clock();
-void asp_clock_funnel();
+void asp_clock_funnel(void *);
 int  asp_open();
 int  asp_close();
 int  asp_wput();
-void atp_retry_req();
 StaticProc asp_scb_t *asp_find_scb();
 StaticProc asp_scb_t *asp_scb_alloc();
 
@@ -101,7 +100,7 @@ StaticProc void asp_timout();
 StaticProc void asp_untimout();
 StaticProc void asp_hangup();
 StaticProc void asp_send_tickle();
-StaticProc void asp_send_tickle_funnel();
+StaticProc void asp_send_tickle_funnel(void *);
 StaticProc void asp_accept();
 StaticProc int  asp_send_req();
 
@@ -374,7 +373,7 @@ void trace_end(str)
 	dPrintf(D_M_ASP, D_L_TRACE,
 		("  %s: %s\n", str, mbuf_totals()));
 }
-#endif AT_MBUF_TRACE
+#endif /* AT_MBUF_TRACE */
 
 /*
  * the write routine
@@ -662,7 +661,7 @@ int asp_wput(gref, m)
 		{
 		struct atp_state *atp = (struct atp_state *)gref->info;
 		if (atp->dflag)
-			atp = atp->atp_msgq;
+			atp = (struct atp_state *)atp->atp_msgq;
 					
 		if (gbuf_cont(mioc) == 0) {
 			asp_iocnak(gref, mioc, EINVAL);
@@ -782,10 +781,10 @@ asp_send_req(gref, mioc, dest, retry, awp, xo, state, bitmap)
  */
 StaticProc void
 asp_send_tickle_funnel(scb)
-	asp_scb_t *scb;
+	void *scb;
 {
         thread_funnel_set(network_flock, TRUE);
-	asp_send_tickle(scb);
+	asp_send_tickle((asp_scb_t *)scb);
         thread_funnel_set(network_flock, FALSE);
 }
 
