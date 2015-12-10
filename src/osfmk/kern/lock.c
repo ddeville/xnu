@@ -81,7 +81,6 @@
 
 #ifdef __ppc__
 #include <ppc/Firmware.h>
-#include <ppc/POWERMAC/mp/MPPlugIn.h>
 #endif
 
 #include <sys/kdebug.h>
@@ -216,9 +215,13 @@ usimple_lock_init(
 	usimple_lock_t	l,
 	etap_event_t	event)
 {
+#ifndef	MACHINE_SIMPLE_LOCK
 	USLDBG(usld_lock_init(l, event));
 	ETAPCALL(etap_simplelock_init((l),(event)));
 	hw_lock_init(&l->interlock);
+#else
+	simple_lock_init(l,event);
+#endif
 }
 
 
@@ -233,6 +236,7 @@ void
 usimple_lock(
 	usimple_lock_t	l)
 {
+#ifndef	MACHINE_SIMPLE_LOCK
 	int i;
 	pc_t		pc;
 #if	ETAP_LOCK_TRACE
@@ -254,6 +258,9 @@ usimple_lock(
 
 	ETAPCALL(etap_simplelock_hold(l, pc, start_wait_time));
 	USLDBG(usld_lock_post(l, pc));
+#else
+	simple_lock(l);
+#endif
 }
 
 
@@ -268,6 +275,7 @@ void
 usimple_unlock(
 	usimple_lock_t	l)
 {
+#ifndef	MACHINE_SIMPLE_LOCK
 	pc_t	pc;
 
 //	checkNMI();										/* (TEST/DEBUG) */
@@ -275,7 +283,13 @@ usimple_unlock(
 	OBTAIN_PC(pc, l);
 	USLDBG(usld_unlock(l, pc));
 	ETAPCALL(etap_simplelock_unlock(l));
+#ifdef  __ppc__
+	sync();
+#endif
 	hw_lock_unlock(&l->interlock);
+#else
+	simple_unlock_rwmb(l);
+#endif
 }
 
 
@@ -295,6 +309,7 @@ unsigned int
 usimple_lock_try(
 	usimple_lock_t	l)
 {
+#ifndef	MACHINE_SIMPLE_LOCK
 	pc_t		pc;
 	unsigned int	success;
 	etap_time_t	zero_time;
@@ -307,6 +322,9 @@ usimple_lock_try(
 		ETAPCALL(etap_simplelock_hold(l, pc, zero_time));
 	}
 	return success;
+#else
+	return(simple_lock_try(l));
+#endif
 }
 
 #if ETAP_LOCK_TRACE

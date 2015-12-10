@@ -27,6 +27,7 @@
 #include <kern/thread.h>
 #include <kern/thread_act.h>
 #include <kern/assert.h>
+#include <kern/clock.h>
 #include <mach/machine/thread_status.h>
 #include <ppc/savearea.h>
 
@@ -49,8 +50,8 @@ extern struct savearea *
 find_user_regs(
 	thread_act_t act);
 
-extern enter_funnel_section(funnel_t *funnel_lock);
-extern exit_funnel_section(funnel_t *funnel_lock);
+extern void enter_funnel_section(funnel_t *funnel_lock);
+extern void exit_funnel_section(void);
 
 /*
  * Function:	unix_syscall
@@ -81,7 +82,7 @@ unix_syscall(
 	else
 		proc = current_proc();
 
-	flavor = (regs->save_r0 == NULL)? 1: 0;
+	flavor = (((unsigned int)regs->save_r0) == NULL)? 1: 0;
 
 	uthread->uu_ar0 = (int *)regs;
 
@@ -164,7 +165,7 @@ unix_syscall(
 		regs->save_srr0 -= 8;
 	} else if (error != EJUSTRETURN) {
 		if (error) {
-			regs->save_r3 = error;
+			regs->save_r3 = (long long)error;
 			/* set the "pc" to execute cerror routine */
 			regs->save_srr0 -= 4;
 		} else { /* (not error) */
@@ -177,10 +178,7 @@ unix_syscall(
 	if (KTRPOINT(proc, KTR_SYSRET))
 		ktrsysret(proc, code, error, uthread->uu_rval[0], funnel_type);
 
-	if(funnel_type == KERNEL_FUNNEL) 
-		 exit_funnel_section(kernel_flock);
-	else if (funnel_type == NETWORK_FUNNEL)
-		 exit_funnel_section(network_flock);
+	 exit_funnel_section();
 
 	if (kdebug_enable && (code != 180)) {
 		KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END,
@@ -214,7 +212,7 @@ unix_syscall_return(error)
 		regs->save_srr0 -= 8;
 	} else if (error != EJUSTRETURN) {
 		if (error) {
-			regs->save_r3 = error;
+			regs->save_r3 = (long long)error;
 			/* set the "pc" to execute cerror routine */
 			regs->save_srr0 -= 4;
 		} else { /* (not error) */
@@ -236,10 +234,7 @@ unix_syscall_return(error)
 	if (KTRPOINT(proc, KTR_SYSRET))
 		ktrsysret(proc, code, error, uthread->uu_rval[0], funnel_type);
 
-	if(funnel_type == KERNEL_FUNNEL) 
-		 exit_funnel_section(kernel_flock);
-	else if (funnel_type == NETWORK_FUNNEL)
-		 exit_funnel_section(network_flock);
+	 exit_funnel_section();
 
 	if (kdebug_enable && (code != 180)) {
 		KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_EXCP_SC, code) | DBG_FUNC_END,
@@ -263,31 +258,29 @@ struct gettimeofday_args{
 	struct timeval *tp;
 	struct timezone *tzp;
 };
-/*  NOTE THIS implementation is for  ppc architectures only */
+/*  NOTE THIS implementation is for  ppc architectures only.
+ *  It is infrequently called, since the commpage intercepts
+ *  most calls in user mode.
+ */
 int
 ppc_gettimeofday(p, uap, retval)
 	struct proc *p;
 	register struct gettimeofday_args *uap;
 	register_t *retval;
 {
-	struct timeval atv;
 	int error = 0;
-	struct timezone ltz;
-	//struct savearea *child_state;
-	extern simple_lock_data_t tz_slock;
 
-	if (uap->tp) {
-		microtime(&atv);
-		retval[0] = atv.tv_sec;
-		retval[1] = atv.tv_usec;
-	}
+	if (uap->tp)
+		clock_gettimeofday(&retval[0], &retval[1]);
 	
 	if (uap->tzp) {
-		usimple_lock(&tz_slock);
+        	struct timezone ltz;
+        	extern simple_lock_data_t tz_slock;
+        
+    		usimple_lock(&tz_slock);
 		ltz = tz;
 		usimple_unlock(&tz_slock);
-		error = copyout((caddr_t)&ltz, (caddr_t)uap->tzp,
-		    sizeof (tz));
+		error = copyout((caddr_t)&ltz, (caddr_t)uap->tzp, sizeof (tz));
 	}
 
 	return(error);

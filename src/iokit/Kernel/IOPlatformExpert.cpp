@@ -26,16 +26,19 @@
  * HISTORY
  */
  
-#include <IOKit/system.h>
-#include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOCPU.h>
 #include <IOKit/IODeviceTreeSupport.h>
-#include <IOKit/IORangeAllocator.h>
-#include <IOKit/IONVRAM.h>
 #include <IOKit/IOKitDebug.h>
+#include <IOKit/IOMapper.h>
+#include <IOKit/IOMessage.h>
+#include <IOKit/IONVRAM.h>
+#include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IORangeAllocator.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/pwr_mgt/RootDomain.h>
-#include <IOKit/IOMessage.h>
+
+#include <IOKit/system.h>
+
 #include <libkern/c++/OSContainers.h>
 
 
@@ -91,6 +94,23 @@ bool IOPlatformExpert::start( IOService * provider )
     
     if (!super::start(provider))
       return false;
+
+    // Register the presence or lack thereof a system 
+    // PCI address mapper with the IOMapper class
+
+#if 1
+    IORegistryEntry * regEntry = IORegistryEntry::fromPath("/u3/dart", gIODTPlane);
+    if (!regEntry)
+	regEntry = IORegistryEntry::fromPath("/dart", gIODTPlane);
+    if (regEntry) {
+	int debugFlags;
+	if (!PE_parse_boot_arg("dart", &debugFlags) || debugFlags)
+	    setProperty(kIOPlatformMapperPresentKey, kOSBooleanTrue);
+	regEntry->release();
+    }
+#endif
+
+    IOMapper::setMapperRequired(0 != getProperty(kIOPlatformMapperPresentKey));
     
     gIOInterruptControllers = OSDictionary::withCapacity(1);
     gIOInterruptControllersLock = IOLockAlloc();
@@ -155,7 +175,7 @@ IOService * IOPlatformExpert::createNub( OSDictionary * from )
 }
 
 bool IOPlatformExpert::compareNubName( const IOService * nub,
-				OSString * name, OSString ** matched = 0 ) const
+				OSString * name, OSString ** matched) const
 {
     return( nub->IORegistryEntry::compareName( name, matched ));
 }
@@ -1064,7 +1084,7 @@ OSMetaClassDefineReservedUnused(IOPlatformExpertDevice,  3);
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 bool IOPlatformExpertDevice::compareName( OSString * name,
-                                        OSString ** matched = 0 ) const
+                                        OSString ** matched) const
 {
     return( IODTCompareNubName( this, name, matched ));
 }
@@ -1126,7 +1146,7 @@ OSMetaClassDefineReservedUnused(IOPlatformDevice,  3);
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 bool IOPlatformDevice::compareName( OSString * name,
-					OSString ** matched = 0 ) const
+					OSString ** matched) const
 {
     return( ((IOPlatformExpert *)getProvider())->
 		compareNubName( this, name, matched ));

@@ -63,6 +63,10 @@
 
 #define	NULL_SEG	0
 
+/* Signal handler flavors supported */
+/* These defns should match the Libc implmn */
+#define UC_TRAD			1
+
 /*
  * Send an interrupt to process.
  *
@@ -116,7 +120,7 @@ sendsig(p, catcher, sig, mask, code)
 	/* Handler should call sigreturn to get out of it */
 	frame.retaddr = 0xffffffff;	
 	frame.catcher = catcher;
-	frame.sigstyle = 1;
+	frame.sigstyle = UC_TRAD;
 	frame.sig = sig;
 
 	if (sig == SIGILL || sig == SIGFPE) {

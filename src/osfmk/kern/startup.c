@@ -86,6 +86,7 @@
 #include <kern/timer_call.h>
 #include <kern/xpr.h>
 #include <kern/zalloc.h>
+#include <vm/vm_shared_memory_server.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_init.h>
 #include <vm/vm_map.h>
@@ -259,7 +260,7 @@ start_kernel_threads(void)
 	 */
 	device_service_create();
 
-	shared_file_boot_time_init();
+	shared_file_boot_time_init(ENV_DEFAULT_SYSTEM, ENV_DEFAULT_ROOT);
 
 #ifdef	IOKIT
 	{
@@ -283,6 +284,10 @@ start_kernel_threads(void)
 		extern void bsd_init(void);
 		bsd_init();
 	}
+#endif
+
+#if __ppc__
+	serial_keyboard_init();		/* Start serial keyboard if wanted */
 #endif
 
 	thread_bind(current_thread(), PROCESSOR_NULL);

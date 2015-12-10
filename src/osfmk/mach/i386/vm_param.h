@@ -202,7 +202,7 @@
 	pmap_enter(					\
 		(pmap),					\
 		(virtual_address),			\
-		(page)->phys_addr,			\
+		(page)->phys_page,			\
 		__prot__,				\
 		flags,					\
 		(wired)					\

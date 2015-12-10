@@ -55,6 +55,7 @@
 
 #include <mach_kdb.h>
 
+#include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 #include <mach/message.h>

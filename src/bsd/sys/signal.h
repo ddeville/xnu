@@ -134,6 +134,8 @@
 #endif
 
 #ifndef _ANSI_SOURCE
+#include <sys/types.h>
+
 typedef unsigned int sigset_t;
 
 union sigval {
@@ -158,7 +160,7 @@ typedef struct __siginfo {
 	void	*si_addr;		/* faulting instruction */
 	union sigval si_value;		/* signal value */
 	long	si_band;		/* band event for SIGPOLL */
-	int	pad[7];			/* RFU */
+	unsigned int	pad[7];		/* Reserved for Future Use */
 } siginfo_t;
 
 /* 
@@ -244,6 +246,8 @@ struct	sigaction {
 #define	SA_NOCLDWAIT	0x0020	/* don't keep zombies around */
 #define	SA_SIGINFO	0x0040	/* signal handler with SA_SIGINFO args */
 #define	SA_USERTRAMP	0x0100	/* do not bounce off kernel's sigtramp */
+/* This will provide 64bit register set in a 32bit user address space */
+#define	SA_64REGSET	0x0200	/* signal handler with SA_SIGINFO args with 64bit regs information */
 #endif
 #define SA_NOCLDSTOP	0x0008	/* do not generate SIGCHLD on child stop */
 

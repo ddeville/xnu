@@ -324,7 +324,8 @@ struct proc *proc;
 	       return EBADF;
 	  }
      }
-     if ((*grefp = (gref_t *)fp->f_data) == 0) {
+     *grefp = (gref_t *)fp->f_data;
+     if (*grefp == 0 || *grefp == (gref_t *)(-1)) {
 	  thread_funnel_switch(KERNEL_FUNNEL, NETWORK_FUNNEL);
 	  return EBADF;
      }

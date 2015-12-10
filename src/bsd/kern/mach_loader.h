@@ -62,7 +62,8 @@ load_return_t load_machfile(
 	unsigned long		macho_size,
 	load_result_t		*result,
 	thread_act_t		thr_act,
-	vm_map_t			map);
+	vm_map_t		map,
+	boolean_t		clean_regions);
 
 #define LOAD_SUCCESS		0
 #define LOAD_BADARCH		1	/* CPU type/subtype not found */

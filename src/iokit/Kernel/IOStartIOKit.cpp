@@ -112,6 +112,8 @@ void IOKitResetTime( void )
     clock_initialize_calendar();
 }
 
+// From <osfmk/kern/debug.c>
+extern int debug_mode;
 
 void StartIOKit( void * p1, void * p2, void * p3, void * p4 )
 {
@@ -129,6 +131,11 @@ void StartIOKit( void * p1, void * p2, void * p3, void * p4 )
 
     if( PE_parse_boot_arg( "io", &debugFlags ))
 	gIOKitDebug = debugFlags;
+
+    // Check for the log synchronous bit set in io
+    if (gIOKitDebug & kIOLogSynchronous)
+        debug_mode = true;
+
     //
     // Have to start IOKit environment before we attempt to start
     // the C++ runtime environment.  At some stage we have to clean up
@@ -140,7 +147,6 @@ void StartIOKit( void * p1, void * p2, void * p3, void * p4 )
     OSlibkernInit();
 
     IOLog("_cppInit done\n");
-
 
    /*****
     * Declare the fake kmod_info structs for built-in components

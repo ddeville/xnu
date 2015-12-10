@@ -63,6 +63,8 @@ extern void PESetGMTTimeOfDay( long secs );
 #ifdef __cplusplus
 } /* extern "C" */
 
+#define kIOPlatformMapperPresentKey "IOPlatformMapperPresent"
+
 extern OSSymbol * gPlatformInterruptControllerName;
 
 class IORangeAllocator;
