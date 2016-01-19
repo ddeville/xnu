@@ -1,0 +1,28 @@
+{
+    "build_systems":
+    [
+        {
+            "name": "Build – Release",
+            "shell_cmd": "make SDKROOT=macosx ARCH_CONFIGS=X86_64 KERNEL_CONFIGS=RELEASE",
+        },
+        {
+            "name": "Build – Debug",
+            "shell_cmd": "make SDKROOT=macosx ARCH_CONFIGS=X86_64 KERNEL_CONFIGS=DEBUG",
+        },
+        {
+            "name": "Build – Development",
+            "shell_cmd": "make SDKROOT=macosx ARCH_CONFIGS=X86_64 KERNEL_CONFIGS=DEVELOPMENT",
+        }
+    ],
+	"folders":
+	[
+		{
+			"folder_exclude_patterns":
+			[
+				"build",
+			],
+            "follow_symlinks": true,
+			"path": "src"
+		}
+	]
+}
